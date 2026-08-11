@@ -15,10 +15,10 @@ Run one evidence-review and counting session. Produce an unadjusted functional-s
 3. Inspect inputs with existing document and repository capabilities. For every Git evidence repository and submodule, require a clean worktree and record HEAD. Exercise production collection only when explicitly authorized and demonstrably state-neutral. Write only inside the output directory.
 4. Apply [通用计数规则.md](references/通用计数规则.md). Read [概要FPA.md](references/概要FPA.md) for overview FPA. For detailed FPA, read [详细FPA-数据功能.md](references/详细FPA-数据功能.md) and [详细FPA-事务功能.md](references/详细FPA-事务功能.md). Read [详细FPA-增强项目.md](references/详细FPA-增强项目.md) for enhancement counts.
 5. Stop formal counting when the selected method is blocked. A detailed-only request remains blocked rather than becoming overview FPA. Preserve candidates, evidence, conflicts, assumptions, and non-counted requirements.
-6. Read [复核与输出.md](references/复核与输出.md), create a transient JSON model, and run:
+6. Read [复核与输出.md](references/复核与输出.md), create a transient JSON model, resolve this Skill's directory from the loaded `SKILL.md`, and run:
 
    ```bash
-   python scripts/generate_review_package.py /tmp/nesma-input.json <new-output-directory>
+   python <skill-directory>/scripts/generate_review_package.py /tmp/nesma-input.json <new-output-directory>
    ```
 
 7. Verify exactly three artifacts exist and report status as only `计数阻断` or `待复核`. Delete the transient JSON after successful generation. Treat workbook review edits as feedback for a new version; preserve the old package and rerun.

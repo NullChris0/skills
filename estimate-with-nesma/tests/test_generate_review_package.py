@@ -10,7 +10,7 @@ from openpyxl import load_workbook
 SCRIPT = Path(__file__).parents[1] / "scripts" / "generate_review_package.py"
 
 
-def model(method="overview"):
+def sample_model(method="overview"):
     return {
         "subject": "名片管理系统",
         "method": method,
@@ -40,14 +40,16 @@ class GeneratorTest(unittest.TestCase):
         return root / "out"
 
     def test_ready_overview_uses_fixed_weights(self):
-        out = self.generate(model())
+        out = self.generate(sample_model())
         wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
         self.assertEqual(wb["数据功能"]["K2"].value, "=IF(J2,7,0)")
         self.assertEqual(wb["事务功能"]["L2"].value, "=IF(K2,4,0)")
         self.assertIn("待复核", (out / "估算审阅报告.md").read_text())
 
     def test_ready_detailed_applies_complexity_matrices(self):
-        value = model("detailed")
+        value = sample_model("detailed")
+        value["data_functions"][0]["detail_evidence_ids"] = ["E1"]
+        value["transactions"][0]["detail_evidence_ids"] = ["E1"]
         value["data_functions"][0].update(ret=2, det=30)
         value["transactions"][0].update(det=20, ftr=3)
         out = self.generate(value)
@@ -58,7 +60,7 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(wb["事务功能"]["J2"].value, 6)
 
     def test_missing_boundary_blocks_and_excludes_rows(self):
-        value = model()
+        value = sample_model()
         value["boundary"] = ""
         out = self.generate(value)
         wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
@@ -66,13 +68,13 @@ class GeneratorTest(unittest.TestCase):
         self.assertNotIn("正式功能点总数", (out / "估算审阅报告.md").read_text())
 
     def test_untraceable_derived_prd_blocks(self):
-        value = model()
+        value = sample_model()
         value["evidence"][0].update(role="意图", derived=True, traceable=False)
         out = self.generate(value)
         self.assertIn("派生材料不可追溯", (out / "估算审阅报告.md").read_text())
 
     def test_evidence_conflict_blocks_affected_rows(self):
-        value = model()
+        value = sample_model()
         value["evidence"][0]["conflict"] = "联系人由外部系统维护"
         out = self.generate(value)
         wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
@@ -80,12 +82,13 @@ class GeneratorTest(unittest.TestCase):
         self.assertIn("证据冲突", (out / "估算审阅报告.md").read_text())
 
     def test_enhancement_formulas_and_protection(self):
-        value = model("detailed")
+        value = sample_model("detailed")
         value.update(count_type="enhancement", baseline_ufp=100)
+        value["transactions"][0]["detail_evidence_ids"] = ["E1"]
         value["data_functions"] = [
-            {"id": "D1", "name": "新增", "type": "ILF", "change": "ADD", "ret": 1, "det": 9, "evidence_ids": ["E1"]},
-            {"id": "D2", "name": "删除", "type": "ILF", "change": "DEL", "ret": 1, "det": 9, "before_fp": 7, "evidence_ids": ["E1"]},
-            {"id": "D3", "name": "修改", "type": "ILF", "change": "CHG", "ret": 2, "det": 30, "before_fp": 7, "evidence_ids": ["E1"]},
+            {"id": "D1", "name": "新增", "type": "ILF", "change": "ADD", "ret": 1, "det": 9, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"]},
+            {"id": "D2", "name": "删除", "type": "ILF", "change": "DEL", "ret": 1, "det": 9, "before_fp": 7, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], "before_evidence_ids": ["E1"]},
+            {"id": "D3", "name": "修改", "type": "ILF", "change": "CHG", "ret": 2, "det": 30, "before_fp": 7, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], "before_evidence_ids": ["E1"]},
         ]
         out = self.generate(value)
         wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
@@ -95,6 +98,26 @@ class GeneratorTest(unittest.TestCase):
         self.assertTrue(wb["数据功能"].protection.sheet)
         self.assertTrue(wb["数据功能"]["K2"].protection.locked)
         self.assertFalse(wb["数据功能"]["L2"].protection.locked)
+
+    def test_workbook_persists_markdown_projection_state(self):
+        out = self.generate(sample_model())
+        wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
+        issue_rows = list(wb["假设与冲突"].values)
+        self.assertIn(("非计数需求", "硬盘尽可能小：非功能约束且无阈值", "已排除", None), issue_rows)
+        inventory = (out / "规范化功能清单.md").read_text()
+        self.assertIn("D1", inventory)
+        self.assertIn("硬盘尽可能小", inventory)
+
+    def test_rejects_unsupported_method(self):
+        value = sample_model("estimated")
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        input_path = root / "input.json"
+        input_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        result = subprocess.run(["python", str(SCRIPT), str(input_path), str(root / "out")], text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("method", result.stderr)
 
 
 if __name__ == "__main__":

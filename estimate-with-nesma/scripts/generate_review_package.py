@@ -11,7 +11,7 @@ from openpyxl.styles import Font, PatternFill, Protection
 
 SCHEMA_VERSION = "1"
 GENERATOR_VERSION = "1"
-OVERVIEW = {"ILF": 7, "ELF": 5, "EI": 4, "EO": 5, "EQ": 4}
+OVERVIEW_WEIGHTS = {"ILF": 7, "ELF": 5, "EI": 4, "EO": 5, "EQ": 4}
 WEIGHTS = {
     "ILF": {"低": 7, "中": 10, "高": 15},
     "ELF": {"低": 5, "中": 7, "高": 10},
@@ -54,9 +54,13 @@ def readiness(model):
         for row in model.get("data_functions", []):
             if not isinstance(row.get("ret"), int) or not isinstance(row.get("det"), int):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 RET/DET")
+            if not row.get("detail_evidence_ids") or any(i not in evidence for i in row.get("detail_evidence_ids", [])):
+                reasons.append(f"{row.get('id', '未知项')}：缺少 RET/DET 证据")
         for row in model.get("transactions", []):
             if not isinstance(row.get("det"), int) or not isinstance(row.get("ftr"), int):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 DET/FTR")
+            if not row.get("detail_evidence_ids") or any(i not in evidence for i in row.get("detail_evidence_ids", [])):
+                reasons.append(f"{row.get('id', '未知项')}：缺少 DET/FTR 证据")
     return list(dict.fromkeys(reasons))
 
 
@@ -87,7 +91,7 @@ def build_workbook(model, reasons, output):
 
     info = wb.create_sheet("计数说明")
     info.append(["字段", "值"])
-    for pair in (("Schema 版本", SCHEMA_VERSION), ("Generator 版本", GENERATOR_VERSION), ("计数对象", model.get("subject", "")), ("方法", model.get("method", "")), ("状态", "计数阻断" if blocked else "待复核"), ("用户", model.get("user", "")), ("范围", model.get("scope", "")), ("边界", model.get("boundary", ""))):
+    for pair in (("Schema 版本", SCHEMA_VERSION), ("Generator 版本", GENERATOR_VERSION), ("审阅包版本", model.get("package_version", 1)), ("计数对象", model.get("subject", "")), ("方法", model.get("method", "")), ("状态", "计数阻断" if blocked else "待复核"), ("用户", model.get("user", "")), ("范围", model.get("scope", "")), ("边界", model.get("boundary", ""))):
         info.append(pair)
     style_sheet(info)
 
@@ -101,7 +105,7 @@ def build_workbook(model, reasons, output):
     data.append(["编号", "名称", "类型", "变更类型", "RET", "DET", "证据编号", "复杂度", "变更后FP", "纳入公式", "计数FP", "输入事实复核", "方法复核", "复核意见", "变更前FP"])
     for index, row in enumerate(model.get("data_functions", []), 2):
         complexity = data_complexity(row["ret"], row["det"]) if isinstance(row.get("ret"), int) and isinstance(row.get("det"), int) else "未决"
-        fp = OVERVIEW.get(row.get("type")) if model.get("method") == "overview" else WEIGHTS.get(row.get("type"), {}).get(complexity)
+        fp = OVERVIEW_WEIGHTS.get(row.get("type")) if model["method"] == "overview" else WEIGHTS.get(row.get("type"), {}).get(complexity)
         included = row_is_counted(row, evidence, blocked)
         data.append([row.get("id"), row.get("name"), row.get("type"), row.get("change", "UNCHANGED"), row.get("ret"), row.get("det"), ",".join(row.get("evidence_ids", [])), complexity, fp, included, f"=IF(J{index},{fp or 0},0)", "待复核", "待复核", "", row.get("before_fp")])
     style_sheet(data, ("L", "M", "N"))
@@ -110,7 +114,7 @@ def build_workbook(model, reasons, output):
     tx.append(["编号", "名称", "类型", "变更类型", "DET", "FTR", "证据编号", "主要处理", "复杂度", "变更后FP", "纳入公式", "计数FP", "输入事实复核", "方法复核", "复核意见", "变更前FP"])
     for index, row in enumerate(model.get("transactions", []), 2):
         complexity = transaction_complexity(row.get("type"), row["ftr"], row["det"]) if isinstance(row.get("ftr"), int) and isinstance(row.get("det"), int) else "未决"
-        fp = OVERVIEW.get(row.get("type")) if model.get("method") == "overview" else WEIGHTS.get(row.get("type"), {}).get(complexity)
+        fp = OVERVIEW_WEIGHTS.get(row.get("type")) if model["method"] == "overview" else WEIGHTS.get(row.get("type"), {}).get(complexity)
         included = row_is_counted(row, evidence, blocked)
         tx.append([row.get("id"), row.get("name"), row.get("type"), row.get("change", "UNCHANGED"), row.get("det"), row.get("ftr"), ",".join(row.get("evidence_ids", [])), row.get("processing", ""), complexity, fp, included, f"=IF(K{index},{fp or 0},0)", "待复核", "待复核", "", row.get("before_fp")])
     style_sheet(tx, ("M", "N", "O"))
@@ -121,6 +125,8 @@ def build_workbook(model, reasons, output):
         issues.append(["阻断", reason, "未解决", ""])
     for assumption in model.get("assumptions", []):
         issues.append(["假设", assumption, "待确认", ""])
+    for item in model.get("non_counted", []):
+        issues.append(["非计数需求", f"{item.get('requirement', '')}：{item.get('reason', '')}", "已排除", ""])
     style_sheet(issues, ("C", "D"))
 
     summary = wb.create_sheet("汇总")
@@ -131,15 +137,18 @@ def build_workbook(model, reasons, output):
     summary.append(["CHGA", '=SUMIF(数据功能!D:D,"CHG",数据功能!K:K)+SUMIF(事务功能!D:D,"CHG",事务功能!L:L)'])
     summary.append(["CHGB", '=SUMIF(数据功能!D:D,"CHG",数据功能!O:O)+SUMIF(事务功能!D:D,"CHG",事务功能!P:P)'])
     summary.append(["EFP", "=B3+B4+B5" if model.get("count_type") == "enhancement" and not blocked else "阻断"])
-    summary.append(["修改后应用 UFP", "=B2+B3-B4+(B5-B6)" if model.get("count_type") == "enhancement" and not blocked and model.get("baseline_ufp") is not None else "证据不足"])
-    summary.append(["UFP", "=SUM(数据功能!K:K)+SUM(事务功能!L:L)" if not blocked else "阻断"])
+    before_rows = [r for r in model.get("data_functions", []) + model.get("transactions", []) if r.get("change") in ("DEL", "CHG")]
+    has_before_evidence = all(isinstance(r.get("before_fp"), (int, float)) and r.get("before_evidence_ids") and all(i in evidence for i in r["before_evidence_ids"]) for r in before_rows)
+    summary.append(["修改后应用 UFP", "=B2+B3-B4+(B5-B6)" if model.get("count_type") == "enhancement" and not blocked and model.get("baseline_ufp") is not None and has_before_evidence else "证据不足"])
+    summary.append(["UFP", "不适用于增强项目" if model.get("count_type") == "enhancement" else "=SUM(数据功能!K:K)+SUM(事务功能!L:L)" if not blocked else "阻断"])
     style_sheet(summary)
 
     review = wb.create_sheet("复核记录")
     review.append(["版本", "复核类型", "复核人", "结论", "意见", "日期"])
-    review.append(["1", "规则/公式检查", "生成器", "已执行", "仅证明计算规则，不代替输入事实或方法复核", ""])
-    review.append(["1", "输入事实复核", "", "待复核", "", ""])
-    review.append(["1", "NESMA/FPA 方法复核", "", "待复核", "", ""])
+    version = model.get("package_version", 1)
+    review.append([version, "规则/公式检查", "生成器", "已执行", "仅证明计算规则，不代替输入事实或方法复核", ""])
+    review.append([version, "输入事实复核", "", "待复核", "", ""])
+    review.append([version, "NESMA/FPA 方法复核", "", "待复核", "", ""])
     style_sheet(review, ("C", "D", "E", "F"))
     wb.save(output)
 
@@ -169,6 +178,10 @@ def main():
     parser.add_argument("output", type=Path)
     args = parser.parse_args()
     model = json.loads(args.input.read_text(encoding="utf-8"))
+    if model.get("method") not in ("overview", "detailed"):
+        parser.error("method must be overview or detailed")
+    if model.get("count_type") not in ("application", "new", "enhancement"):
+        parser.error("count_type must be application, new, or enhancement")
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("output directory is not empty; create a new version directory")
     args.output.mkdir(parents=True, exist_ok=True)

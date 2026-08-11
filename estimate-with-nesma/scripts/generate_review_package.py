@@ -52,21 +52,31 @@ def readiness(model):
             reasons.append(f"{row.get('id', '未知项')}：缺少可定位证据")
     if model.get("method") == "detailed":
         for row in model.get("data_functions", []):
-            if not isinstance(row.get("ret"), int) or not isinstance(row.get("det"), int):
+            if row.get("change") != "DEL" and (not isinstance(row.get("ret"), int) or not isinstance(row.get("det"), int)):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 RET/DET")
-            if not row.get("detail_evidence_ids") or any(i not in evidence for i in row.get("detail_evidence_ids", [])):
+            if row.get("change") != "DEL" and (not row.get("detail_evidence_ids") or any(i not in evidence for i in row.get("detail_evidence_ids", []))):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 RET/DET 证据")
         for row in model.get("transactions", []):
-            if not isinstance(row.get("det"), int) or not isinstance(row.get("ftr"), int):
+            if row.get("change") != "DEL" and (not isinstance(row.get("det"), int) or not isinstance(row.get("ftr"), int)):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 DET/FTR")
-            if not row.get("detail_evidence_ids") or any(i not in evidence for i in row.get("detail_evidence_ids", [])):
+            if row.get("change") != "DEL" and (not row.get("detail_evidence_ids") or any(i not in evidence for i in row.get("detail_evidence_ids", []))):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 DET/FTR 证据")
+    if model.get("count_type") == "enhancement":
+        for row in rows:
+            if row.get("change") in ("DEL", "CHG") and (not isinstance(row.get("before_fp"), (int, float)) or not row.get("before_evidence_ids") or any(i not in evidence for i in row.get("before_evidence_ids", []))):
+                reasons.append(f"{row.get('id', '未知项')}：缺少变更前规模证据")
     return list(dict.fromkeys(reasons))
 
 
-def row_is_counted(row, evidence, blocked):
+def row_is_counted(row, evidence, globally_blocked, method, count_type):
     ids = row.get("evidence_ids", [])
-    return not blocked and bool(ids) and all(i in evidence and not evidence[i].get("conflict") for i in ids)
+    if globally_blocked or not ids or any(i not in evidence or evidence[i].get("conflict") or (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in ids):
+        return False
+    if method == "detailed" and row.get("change") != "DEL" and (not row.get("detail_evidence_ids") or any(i not in evidence for i in row["detail_evidence_ids"])):
+        return False
+    if count_type == "enhancement" and row.get("change") in ("DEL", "CHG") and (not isinstance(row.get("before_fp"), (int, float)) or not row.get("before_evidence_ids") or any(i not in evidence for i in row["before_evidence_ids"])):
+        return False
+    return True
 
 
 def style_sheet(ws, review_columns=()):
@@ -88,6 +98,7 @@ def build_workbook(model, reasons, output):
     wb.remove(wb.active)
     evidence = {e.get("id"): e for e in model.get("evidence", [])}
     blocked = bool(reasons)
+    globally_blocked = any(not model.get(field) for field in ("user", "scope", "boundary"))
 
     info = wb.create_sheet("计数说明")
     info.append(["字段", "值"])
@@ -102,21 +113,21 @@ def build_workbook(model, reasons, output):
     style_sheet(ev)
 
     data = wb.create_sheet("数据功能")
-    data.append(["编号", "名称", "类型", "变更类型", "RET", "DET", "证据编号", "复杂度", "变更后FP", "纳入公式", "计数FP", "输入事实复核", "方法复核", "复核意见", "变更前FP"])
+    data.append(["编号", "名称", "类型", "变更类型", "RET", "DET", "证据编号", "复杂度", "变更后FP", "纳入公式", "计数FP", "输入事实复核", "方法复核", "复核意见", "变更前FP", "详细计数证据", "变更前证据"])
     for index, row in enumerate(model.get("data_functions", []), 2):
         complexity = data_complexity(row["ret"], row["det"]) if isinstance(row.get("ret"), int) and isinstance(row.get("det"), int) else "未决"
         fp = OVERVIEW_WEIGHTS.get(row.get("type")) if model["method"] == "overview" else WEIGHTS.get(row.get("type"), {}).get(complexity)
-        included = row_is_counted(row, evidence, blocked)
-        data.append([row.get("id"), row.get("name"), row.get("type"), row.get("change", "UNCHANGED"), row.get("ret"), row.get("det"), ",".join(row.get("evidence_ids", [])), complexity, fp, included, f"=IF(J{index},{fp or 0},0)", "待复核", "待复核", "", row.get("before_fp")])
+        included = row_is_counted(row, evidence, globally_blocked, model["method"], model["count_type"])
+        data.append([row.get("id"), row.get("name"), row.get("type"), row.get("change", "UNCHANGED"), row.get("ret"), row.get("det"), ",".join(row.get("evidence_ids", [])), complexity, fp, included, f"=IF(J{index},{fp or 0},0)", "待复核", "待复核", "", row.get("before_fp"), ",".join(row.get("detail_evidence_ids", [])), ",".join(row.get("before_evidence_ids", []))])
     style_sheet(data, ("L", "M", "N"))
 
     tx = wb.create_sheet("事务功能")
-    tx.append(["编号", "名称", "类型", "变更类型", "DET", "FTR", "证据编号", "主要处理", "复杂度", "变更后FP", "纳入公式", "计数FP", "输入事实复核", "方法复核", "复核意见", "变更前FP"])
+    tx.append(["编号", "名称", "类型", "变更类型", "DET", "FTR", "证据编号", "主要处理", "复杂度", "变更后FP", "纳入公式", "计数FP", "输入事实复核", "方法复核", "复核意见", "变更前FP", "详细计数证据", "变更前证据"])
     for index, row in enumerate(model.get("transactions", []), 2):
         complexity = transaction_complexity(row.get("type"), row["ftr"], row["det"]) if isinstance(row.get("ftr"), int) and isinstance(row.get("det"), int) else "未决"
         fp = OVERVIEW_WEIGHTS.get(row.get("type")) if model["method"] == "overview" else WEIGHTS.get(row.get("type"), {}).get(complexity)
-        included = row_is_counted(row, evidence, blocked)
-        tx.append([row.get("id"), row.get("name"), row.get("type"), row.get("change", "UNCHANGED"), row.get("det"), row.get("ftr"), ",".join(row.get("evidence_ids", [])), row.get("processing", ""), complexity, fp, included, f"=IF(K{index},{fp or 0},0)", "待复核", "待复核", "", row.get("before_fp")])
+        included = row_is_counted(row, evidence, globally_blocked, model["method"], model["count_type"])
+        tx.append([row.get("id"), row.get("name"), row.get("type"), row.get("change", "UNCHANGED"), row.get("det"), row.get("ftr"), ",".join(row.get("evidence_ids", [])), row.get("processing", ""), complexity, fp, included, f"=IF(K{index},{fp or 0},0)", "待复核", "待复核", "", row.get("before_fp"), ",".join(row.get("detail_evidence_ids", [])), ",".join(row.get("before_evidence_ids", []))])
     style_sheet(tx, ("M", "N", "O"))
 
     issues = wb.create_sheet("假设与冲突")
@@ -130,8 +141,8 @@ def build_workbook(model, reasons, output):
     style_sheet(issues, ("C", "D"))
 
     summary = wb.create_sheet("汇总")
-    summary.append(["项目", "公式/值"])
-    summary.append(["增强前应用 UFP", model.get("baseline_ufp", "")])
+    summary.append(["项目", "公式/值", "证据编号"])
+    summary.append(["增强前应用 UFP", model.get("baseline_ufp", ""), ",".join(model.get("baseline_evidence_ids", []))])
     summary.append(["ADD", '=SUMIF(数据功能!D:D,"ADD",数据功能!K:K)+SUMIF(事务功能!D:D,"ADD",事务功能!L:L)'])
     summary.append(["DEL", '=SUMIF(数据功能!D:D,"DEL",数据功能!O:O)+SUMIF(事务功能!D:D,"DEL",事务功能!P:P)'])
     summary.append(["CHGA", '=SUMIF(数据功能!D:D,"CHG",数据功能!K:K)+SUMIF(事务功能!D:D,"CHG",事务功能!L:L)'])
@@ -139,7 +150,8 @@ def build_workbook(model, reasons, output):
     summary.append(["EFP", "=B3+B4+B5" if model.get("count_type") == "enhancement" and not blocked else "阻断"])
     before_rows = [r for r in model.get("data_functions", []) + model.get("transactions", []) if r.get("change") in ("DEL", "CHG")]
     has_before_evidence = all(isinstance(r.get("before_fp"), (int, float)) and r.get("before_evidence_ids") and all(i in evidence for i in r["before_evidence_ids"]) for r in before_rows)
-    summary.append(["修改后应用 UFP", "=B2+B3-B4+(B5-B6)" if model.get("count_type") == "enhancement" and not blocked and model.get("baseline_ufp") is not None and has_before_evidence else "证据不足"])
+    has_baseline_evidence = model.get("baseline_evidence_ids") and all(i in evidence for i in model["baseline_evidence_ids"])
+    summary.append(["修改后应用 UFP", "=B2+B3-B4+(B5-B6)" if model.get("count_type") == "enhancement" and not blocked and model.get("baseline_ufp") is not None and has_baseline_evidence and has_before_evidence else "证据不足"])
     summary.append(["UFP", "不适用于增强项目" if model.get("count_type") == "enhancement" else "=SUM(数据功能!K:K)+SUM(事务功能!L:L)" if not blocked else "阻断"])
     style_sheet(summary)
 
@@ -182,6 +194,18 @@ def main():
         parser.error("method must be overview or detailed")
     if model.get("count_type") not in ("application", "new", "enhancement"):
         parser.error("count_type must be application, new, or enhancement")
+    for row in model.get("data_functions", []):
+        if row.get("type") not in ("ILF", "ELF"):
+            parser.error("data function type must be ILF or ELF")
+        if any(value is not None and (not isinstance(value, int) or value < 1) for value in (row.get("ret"), row.get("det"))):
+            parser.error("data function RET/DET must be positive integers")
+    for row in model.get("transactions", []):
+        if row.get("type") not in ("EI", "EO", "EQ"):
+            parser.error("transaction function type must be EI, EO, or EQ")
+        if row.get("det") is not None and (not isinstance(row["det"], int) or row["det"] < 1):
+            parser.error("transaction DET must be a positive integer")
+        if row.get("ftr") is not None and (not isinstance(row["ftr"], int) or row["ftr"] < 0):
+            parser.error("transaction FTR must be a non-negative integer")
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("output directory is not empty; create a new version directory")
     args.output.mkdir(parents=True, exist_ok=True)

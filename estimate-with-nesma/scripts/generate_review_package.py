@@ -63,7 +63,7 @@ def readiness(model):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 DET/FTR 证据")
     if model.get("count_type") == "enhancement":
         for row in rows:
-            if row.get("change") in ("DEL", "CHG") and (not isinstance(row.get("before_fp"), (int, float)) or not row.get("before_evidence_ids") or any(i not in evidence for i in row.get("before_evidence_ids", []))):
+            if row.get("change") == "DEL" and (not isinstance(row.get("before_fp"), (int, float)) or not row.get("before_evidence_ids") or any(i not in evidence for i in row.get("before_evidence_ids", []))):
                 reasons.append(f"{row.get('id', '未知项')}：缺少变更前规模证据")
     return list(dict.fromkeys(reasons))
 
@@ -72,9 +72,9 @@ def row_is_counted(row, evidence, globally_blocked, method, count_type):
     ids = row.get("evidence_ids", [])
     if globally_blocked or not ids or any(i not in evidence or evidence[i].get("conflict") or (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in ids):
         return False
-    if method == "detailed" and row.get("change") != "DEL" and (not row.get("detail_evidence_ids") or any(i not in evidence for i in row["detail_evidence_ids"])):
+    if method == "detailed" and row.get("change") != "DEL" and (not row.get("detail_evidence_ids") or any(i not in evidence or evidence[i].get("conflict") or (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in row["detail_evidence_ids"])):
         return False
-    if count_type == "enhancement" and row.get("change") in ("DEL", "CHG") and (not isinstance(row.get("before_fp"), (int, float)) or not row.get("before_evidence_ids") or any(i not in evidence for i in row["before_evidence_ids"])):
+    if count_type == "enhancement" and row.get("change") == "DEL" and (not isinstance(row.get("before_fp"), (int, float)) or not row.get("before_evidence_ids") or any(i not in evidence or evidence[i].get("conflict") or (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in row["before_evidence_ids"])):
         return False
     return True
 
@@ -107,9 +107,9 @@ def build_workbook(model, reasons, output):
     style_sheet(info)
 
     ev = wb.create_sheet("证据登记")
-    ev.append(["证据编号", "证据角色", "来源", "版本/实测时间", "具体定位", "观察事实", "支持主张", "冲突/限制"])
+    ev.append(["证据编号", "证据角色", "来源", "版本/实测时间", "具体定位", "观察事实", "支持主张", "派生材料", "可追溯", "冲突/限制"])
     for e in model.get("evidence", []):
-        ev.append([e.get(k, "") for k in ("id", "role", "source", "version", "location", "fact", "claims", "conflict")])
+        ev.append([e.get(k, "") for k in ("id", "role", "source", "version", "location", "fact", "claims", "derived", "traceable", "conflict")])
     style_sheet(ev)
 
     data = wb.create_sheet("数据功能")
@@ -144,13 +144,13 @@ def build_workbook(model, reasons, output):
     summary.append(["项目", "公式/值", "证据编号"])
     summary.append(["增强前应用 UFP", model.get("baseline_ufp", ""), ",".join(model.get("baseline_evidence_ids", []))])
     summary.append(["ADD", '=SUMIF(数据功能!D:D,"ADD",数据功能!K:K)+SUMIF(事务功能!D:D,"ADD",事务功能!L:L)'])
-    summary.append(["DEL", '=SUMIF(数据功能!D:D,"DEL",数据功能!O:O)+SUMIF(事务功能!D:D,"DEL",事务功能!P:P)'])
+    summary.append(["DEL", '=SUMIFS(数据功能!O:O,数据功能!D:D,"DEL",数据功能!J:J,TRUE)+SUMIFS(事务功能!P:P,事务功能!D:D,"DEL",事务功能!K:K,TRUE)'])
     summary.append(["CHGA", '=SUMIF(数据功能!D:D,"CHG",数据功能!K:K)+SUMIF(事务功能!D:D,"CHG",事务功能!L:L)'])
-    summary.append(["CHGB", '=SUMIF(数据功能!D:D,"CHG",数据功能!O:O)+SUMIF(事务功能!D:D,"CHG",事务功能!P:P)'])
+    summary.append(["CHGB", '=SUMIFS(数据功能!O:O,数据功能!D:D,"CHG",数据功能!J:J,TRUE)+SUMIFS(事务功能!P:P,事务功能!D:D,"CHG",事务功能!K:K,TRUE)'])
     summary.append(["EFP", "=B3+B4+B5" if model.get("count_type") == "enhancement" and not blocked else "阻断"])
     before_rows = [r for r in model.get("data_functions", []) + model.get("transactions", []) if r.get("change") in ("DEL", "CHG")]
-    has_before_evidence = all(isinstance(r.get("before_fp"), (int, float)) and r.get("before_evidence_ids") and all(i in evidence for i in r["before_evidence_ids"]) for r in before_rows)
-    has_baseline_evidence = model.get("baseline_evidence_ids") and all(i in evidence for i in model["baseline_evidence_ids"])
+    has_before_evidence = all(isinstance(r.get("before_fp"), (int, float)) and r.get("before_evidence_ids") and all(i in evidence and not evidence[i].get("conflict") and not (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in r["before_evidence_ids"]) for r in before_rows)
+    has_baseline_evidence = model.get("baseline_evidence_ids") and all(i in evidence and not evidence[i].get("conflict") and not (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in model["baseline_evidence_ids"])
     summary.append(["修改后应用 UFP", "=B2+B3-B4+(B5-B6)" if model.get("count_type") == "enhancement" and not blocked and model.get("baseline_ufp") is not None and has_baseline_evidence and has_before_evidence else "证据不足"])
     summary.append(["UFP", "不适用于增强项目" if model.get("count_type") == "enhancement" else "=SUM(数据功能!K:K)+SUM(事务功能!L:L)" if not blocked else "阻断"])
     style_sheet(summary)
@@ -206,6 +206,15 @@ def main():
             parser.error("transaction DET must be a positive integer")
         if row.get("ftr") is not None and (not isinstance(row["ftr"], int) or row["ftr"] < 0):
             parser.error("transaction FTR must be a non-negative integer")
+    for row in model.get("data_functions", []) + model.get("transactions", []):
+        if row.get("change", "UNCHANGED") not in ("ADD", "DEL", "CHG", "UNCHANGED"):
+            parser.error("change must be ADD, DEL, CHG, or UNCHANGED")
+        before_fp = row.get("before_fp")
+        if before_fp is not None and (isinstance(before_fp, bool) or not isinstance(before_fp, (int, float)) or before_fp <= 0):
+            parser.error("before_fp must be a positive number")
+    baseline = model.get("baseline_ufp")
+    if baseline is not None and (isinstance(baseline, bool) or not isinstance(baseline, (int, float)) or baseline < 0):
+        parser.error("baseline_ufp must be a non-negative number")
     if args.output.exists() and any(args.output.iterdir()):
         parser.error("output directory is not empty; create a new version directory")
     args.output.mkdir(parents=True, exist_ok=True)

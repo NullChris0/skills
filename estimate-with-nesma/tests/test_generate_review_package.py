@@ -95,12 +95,24 @@ class GeneratorTest(unittest.TestCase):
         summary = wb["汇总"]
         self.assertEqual(summary["B7"].value, "=B3+B4+B5")
         self.assertEqual(summary["B8"].value, "=B2+B3-B4+(B5-B6)")
+        self.assertIn("数据功能!J:J,TRUE", summary["B4"].value)
+        self.assertIn("数据功能!J:J,TRUE", summary["B6"].value)
         self.assertTrue(wb["数据功能"].protection.sheet)
         self.assertTrue(wb["数据功能"]["K2"].protection.locked)
         self.assertFalse(wb["数据功能"]["L2"].protection.locked)
         self.assertEqual(wb["数据功能"]["P2"].value, "E1")
         self.assertEqual(wb["数据功能"]["Q3"].value, "E1")
         self.assertEqual(summary["C2"].value, "E1")
+
+    def test_change_without_before_state_allows_efp_but_not_net_change(self):
+        value = sample_model("detailed")
+        value.update(count_type="enhancement")
+        value["data_functions"][0].update(change="CHG", detail_evidence_ids=["E1"])
+        value["transactions"] = []
+        out = self.generate(value)
+        wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
+        self.assertEqual(wb["汇总"]["B7"].value, "=B3+B4+B5")
+        self.assertEqual(wb["汇总"]["B8"].value, "证据不足")
 
     def test_workbook_persists_markdown_projection_state(self):
         out = self.generate(sample_model())
@@ -124,6 +136,19 @@ class GeneratorTest(unittest.TestCase):
         result = subprocess.run(["python", str(SCRIPT), str(input_path), str(root / "out")], text=True, capture_output=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("method", result.stderr)
+
+    def test_rejects_invalid_change_and_fp_values(self):
+        value = sample_model()
+        value["data_functions"][0]["change"] = "MAYBE"
+        value["data_functions"][0]["before_fp"] = True
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        input_path = root / "input.json"
+        input_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        result = subprocess.run(["python", str(SCRIPT), str(input_path), str(root / "out")], text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("change", result.stderr)
 
     def test_blocked_package_retains_resolved_row_formulas(self):
         value = sample_model()

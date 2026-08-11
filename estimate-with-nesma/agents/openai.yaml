@@ -1,0 +1,6 @@
+interface:
+  display_name: "NESMA 功能点估算"
+  short_description: "审查证据并生成可复核的 NESMA 功能点估算审阅包"
+  default_prompt: "Use $estimate-with-nesma to review evidence and create a NESMA estimation review package."
+policy:
+  allow_implicit_invocation: false

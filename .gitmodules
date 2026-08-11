@@ -1,0 +1,3 @@
+[submodule "sources/nesma-learning-notes"]
+	path = sources/nesma-learning-notes
+	url = https://github.com/NullChris0/nesma-learning-notes.git

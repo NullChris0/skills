@@ -21,6 +21,11 @@ WEIGHTS = {
 }
 
 
+def evidence_is_usable(evidence, evidence_id):
+    item = evidence.get(evidence_id, {})
+    return bool(item) and not item.get("conflict") and not (item.get("derived") and not item.get("traceable"))
+
+
 def data_complexity(ret, det):
     row = 0 if ret == 1 else 1 if ret <= 5 else 2
     col = 0 if det <= 19 else 1 if det <= 50 else 2
@@ -41,12 +46,13 @@ def readiness(model):
         if not model.get(field):
             reasons.append(f"缺少{label}")
     evidence = {e.get("id"): e for e in model.get("evidence", [])}
-    for item in model.get("evidence", []):
-        if item.get("derived") and not item.get("traceable"):
-            reasons.append(f"{item.get('id', '未知证据')}：派生材料不可追溯")
-        if item.get("conflict"):
-            reasons.append(f"{item.get('id', '未知证据')}：证据冲突：{item['conflict']}")
     rows = model.get("data_functions", []) + model.get("transactions", [])
+    formal_evidence_ids = {i for row in rows for i in row.get("evidence_ids", []) + (row.get("detail_evidence_ids", []) if row.get("change") != "DEL" else []) + (row.get("before_evidence_ids", []) if row.get("change") == "DEL" else [])}
+    for item in model.get("evidence", []):
+        if item.get("id") in formal_evidence_ids and item.get("derived") and not item.get("traceable"):
+            reasons.append(f"{item.get('id', '未知证据')}：派生材料不可追溯")
+        if item.get("id") in formal_evidence_ids and item.get("conflict"):
+            reasons.append(f"{item.get('id', '未知证据')}：证据冲突：{item['conflict']}")
     for row in rows:
         if not row.get("evidence_ids") or any(i not in evidence for i in row.get("evidence_ids", [])):
             reasons.append(f"{row.get('id', '未知项')}：缺少可定位证据")
@@ -70,11 +76,13 @@ def readiness(model):
 
 def row_is_counted(row, evidence, globally_blocked, method, count_type):
     ids = row.get("evidence_ids", [])
-    if globally_blocked or not ids or any(i not in evidence or evidence[i].get("conflict") or (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in ids):
+    if globally_blocked or not ids or any(not evidence_is_usable(evidence, i) for i in ids):
         return False
-    if method == "detailed" and row.get("change") != "DEL" and (not row.get("detail_evidence_ids") or any(i not in evidence or evidence[i].get("conflict") or (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in row["detail_evidence_ids"])):
-        return False
-    if count_type == "enhancement" and row.get("change") == "DEL" and (not isinstance(row.get("before_fp"), (int, float)) or not row.get("before_evidence_ids") or any(i not in evidence or evidence[i].get("conflict") or (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in row["before_evidence_ids"])):
+    if method == "detailed" and row.get("change") != "DEL":
+        counts = (row.get("ret"), row.get("det")) if row.get("type") in ("ILF", "ELF") else (row.get("det"), row.get("ftr"))
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in counts) or not row.get("detail_evidence_ids") or any(not evidence_is_usable(evidence, i) for i in row["detail_evidence_ids"]):
+            return False
+    if count_type == "enhancement" and row.get("change") == "DEL" and (not isinstance(row.get("before_fp"), (int, float)) or isinstance(row.get("before_fp"), bool) or not row.get("before_evidence_ids") or any(not evidence_is_usable(evidence, i) for i in row["before_evidence_ids"])):
         return False
     return True
 
@@ -149,8 +157,8 @@ def build_workbook(model, reasons, output):
     summary.append(["CHGB", '=SUMIFS(数据功能!O:O,数据功能!D:D,"CHG",数据功能!J:J,TRUE)+SUMIFS(事务功能!P:P,事务功能!D:D,"CHG",事务功能!K:K,TRUE)'])
     summary.append(["EFP", "=B3+B4+B5" if model.get("count_type") == "enhancement" and not blocked else "阻断"])
     before_rows = [r for r in model.get("data_functions", []) + model.get("transactions", []) if r.get("change") in ("DEL", "CHG")]
-    has_before_evidence = all(isinstance(r.get("before_fp"), (int, float)) and r.get("before_evidence_ids") and all(i in evidence and not evidence[i].get("conflict") and not (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in r["before_evidence_ids"]) for r in before_rows)
-    has_baseline_evidence = model.get("baseline_evidence_ids") and all(i in evidence and not evidence[i].get("conflict") and not (evidence[i].get("derived") and not evidence[i].get("traceable")) for i in model["baseline_evidence_ids"])
+    has_before_evidence = all(isinstance(r.get("before_fp"), (int, float)) and not isinstance(r.get("before_fp"), bool) and r.get("before_evidence_ids") and all(evidence_is_usable(evidence, i) for i in r["before_evidence_ids"]) for r in before_rows)
+    has_baseline_evidence = model.get("baseline_evidence_ids") and all(evidence_is_usable(evidence, i) for i in model["baseline_evidence_ids"])
     summary.append(["修改后应用 UFP", "=B2+B3-B4+(B5-B6)" if model.get("count_type") == "enhancement" and not blocked and model.get("baseline_ufp") is not None and has_baseline_evidence and has_before_evidence else "证据不足"])
     summary.append(["UFP", "不适用于增强项目" if model.get("count_type") == "enhancement" else "=SUM(数据功能!K:K)+SUM(事务功能!L:L)" if not blocked else "阻断"])
     style_sheet(summary)
@@ -197,14 +205,14 @@ def main():
     for row in model.get("data_functions", []):
         if row.get("type") not in ("ILF", "ELF"):
             parser.error("data function type must be ILF or ELF")
-        if any(value is not None and (not isinstance(value, int) or value < 1) for value in (row.get("ret"), row.get("det"))):
+        if any(value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1) for value in (row.get("ret"), row.get("det"))):
             parser.error("data function RET/DET must be positive integers")
     for row in model.get("transactions", []):
         if row.get("type") not in ("EI", "EO", "EQ"):
             parser.error("transaction function type must be EI, EO, or EQ")
-        if row.get("det") is not None and (not isinstance(row["det"], int) or row["det"] < 1):
+        if row.get("det") is not None and (not isinstance(row["det"], int) or isinstance(row["det"], bool) or row["det"] < 1):
             parser.error("transaction DET must be a positive integer")
-        if row.get("ftr") is not None and (not isinstance(row["ftr"], int) or row["ftr"] < 0):
+        if row.get("ftr") is not None and (not isinstance(row["ftr"], int) or isinstance(row["ftr"], bool) or row["ftr"] < 0):
             parser.error("transaction FTR must be a non-negative integer")
     for row in model.get("data_functions", []) + model.get("transactions", []):
         if row.get("change", "UNCHANGED") not in ("ADD", "DEL", "CHG", "UNCHANGED"):

@@ -10,9 +10,9 @@ Run one evidence-review and counting session. Produce an unadjusted functional-s
 
 ## Workflow
 
-1. Read [知识来源.md](references/知识来源.md), [证据审查.md](references/证据审查.md), and [计数对象与方法选择.md](references/计数对象与方法选择.md).
-2. Resolve the user, counting scope, application boundary, counting subject, version point, count type, requested method, evidence roles, and output directory. Recommend the input profile from `证据审查.md`; accept other formats by semantic role.
-3. Inspect inputs with existing document and repository capabilities. For every Git evidence repository and submodule, require a clean worktree and record HEAD. Exercise production collection only when explicitly authorized and demonstrably state-neutral. Write only inside the output directory.
+1. Read and complete [启动访谈.md](references/启动访谈.md). Stop until the user explicitly confirms its complete summary in a later turn.
+2. After confirmation, read [知识来源.md](references/知识来源.md), [证据审查.md](references/证据审查.md), and [计数对象与方法选择.md](references/计数对象与方法选择.md).
+3. Inspect the confirmed inputs with existing document and repository capabilities. Exercise production collection only when explicitly authorized and demonstrably state-neutral. Write only inside the output directory.
 4. Apply [通用计数规则.md](references/通用计数规则.md). Read [概要FPA.md](references/概要FPA.md) for overview FPA. For detailed FPA, read [详细FPA-数据功能.md](references/详细FPA-数据功能.md) and [详细FPA-事务功能.md](references/详细FPA-事务功能.md). Read [详细FPA-增强项目.md](references/详细FPA-增强项目.md) for enhancement counts.
 5. Stop formal counting when the selected method is blocked. A detailed-only request remains blocked rather than becoming overview FPA. Preserve candidates, evidence, conflicts, assumptions, and non-counted requirements.
 6. Read [复核与输出.md](references/复核与输出.md), create a transient JSON model, resolve this Skill's directory from the loaded `SKILL.md`, and run:

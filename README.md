@@ -5,6 +5,7 @@
 ## Skills
 
 - `estimate-with-nesma`：审查证据并生成可复核的 NESMA 概要或详细 FPA 审阅包。
+- `write-grounded-chinese`：基于权威材料撰写和保真修改中文正式文档与技术文章。
 
 ## 安装
 

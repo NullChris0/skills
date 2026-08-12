@@ -3,10 +3,13 @@
 
 import argparse
 import json
+import unicodedata
+from copy import copy
 from pathlib import Path
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Protection
+from openpyxl.utils import get_column_letter
 
 
 SCHEMA_VERSION = "1"
@@ -97,6 +100,18 @@ def style_sheet(ws, review_columns=()):
         for cell in ws[column][1:]:
             cell.protection = Protection(locked=False)
             cell.fill = PatternFill("solid", fgColor="FFF2CC")
+    for index, cells in enumerate(ws.iter_cols(), 1):
+        width = 0
+        for cell in cells:
+            if cell.value is None or (isinstance(cell.value, str) and cell.value.startswith("=")):
+                continue
+            visual_width = max((sum(2 if unicodedata.east_asian_width(char) in "WFA" else 1 for char in line) for line in str(cell.value).splitlines()), default=0)
+            width = max(width, visual_width + 2)
+            if visual_width + 2 > 50:
+                alignment = copy(cell.alignment)
+                alignment.wrap_text = True
+                cell.alignment = alignment
+        ws.column_dimensions[get_column_letter(index)].width = min(width, 50)
     ws.protection.sheet = True
     ws.protection.enable()
 

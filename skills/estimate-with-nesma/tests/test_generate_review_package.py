@@ -46,6 +46,17 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(wb["事务功能"]["L2"].value, "=IF(K2,4,0)")
         self.assertIn("待复核", (out / "估算审阅报告.md").read_text())
 
+    def test_all_sheets_fit_columns_and_wrap_long_text(self):
+        value = sample_model()
+        value["scope"] = "中" * 60
+        out = self.generate(value)
+        wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
+
+        self.assertTrue(all(ws.max_column == len(ws.column_dimensions) for ws in wb.worksheets))
+        self.assertEqual(wb["计数说明"].column_dimensions["B"].width, 50)
+        self.assertTrue(wb["计数说明"]["B9"].alignment.wrap_text)
+        self.assertLess(wb["汇总"].column_dimensions["B"].width, 50)
+
     def test_ready_detailed_applies_complexity_matrices(self):
         value = sample_model("detailed")
         value["data_functions"][0]["detail_evidence_ids"] = ["E1"]

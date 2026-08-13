@@ -10,6 +10,22 @@ from openpyxl import load_workbook
 SCRIPT = Path(__file__).parents[1] / "scripts" / "generate_review_package.py"
 
 
+def data_inventory(ret, det):
+    return {"rets": [f"RET{i}" for i in range(1, ret + 1)], "dets": [f"DET{i}" for i in range(1, det + 1)]}
+
+
+def transaction_inventory(det, ftr_ids):
+    dets = []
+    for index in range(1, det + 1):
+        if index == 1:
+            dets.append({"name": "启动触发", "side": "启动触发"})
+        elif index == 2:
+            dets.append({"name": "消息", "side": "消息"})
+        else:
+            dets.append({"name": f"DET{index}", "side": "输入"})
+    return {"dets": dets, "ftrs": list(ftr_ids)}
+
+
 def sample_model(method="overview"):
     return {
         "subject": "名片管理系统",
@@ -59,10 +75,12 @@ class GeneratorTest(unittest.TestCase):
 
     def test_ready_detailed_applies_complexity_matrices(self):
         value = sample_model("detailed")
-        value["data_functions"][0]["detail_evidence_ids"] = ["E1"]
-        value["transactions"][0]["detail_evidence_ids"] = ["E1"]
-        value["data_functions"][0].update(ret=2, det=30)
-        value["transactions"][0].update(det=20, ftr=3)
+        value["data_functions"] = [
+            {"id": "D1", "name": "联系人", "type": "ILF", "change": "UNCHANGED", "ret": 2, "det": 30, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], **data_inventory(2, 30)},
+            {"id": "D2", "name": "辅助一", "type": "ILF", "change": "UNCHANGED", "ret": 1, "det": 2, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], **data_inventory(1, 2)},
+            {"id": "D3", "name": "辅助二", "type": "ILF", "change": "UNCHANGED", "ret": 1, "det": 2, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], **data_inventory(1, 2)},
+        ]
+        value["transactions"][0].update(det=20, ftr=3, detail_evidence_ids=["E1"], **transaction_inventory(20, ["D1", "D2", "D3"]))
         out = self.generate(value)
         wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
         self.assertEqual(wb["数据功能"]["H2"].value, "中")
@@ -95,11 +113,11 @@ class GeneratorTest(unittest.TestCase):
     def test_enhancement_formulas_and_protection(self):
         value = sample_model("detailed")
         value.update(count_type="enhancement", baseline_ufp=100, baseline_evidence_ids=["E1"])
-        value["transactions"][0]["detail_evidence_ids"] = ["E1"]
+        value["transactions"][0].update(detail_evidence_ids=["E1"], **transaction_inventory(9, ["D1"]))
         value["data_functions"] = [
-            {"id": "D1", "name": "新增", "type": "ILF", "change": "ADD", "ret": 1, "det": 9, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"]},
+            {"id": "D1", "name": "新增", "type": "ILF", "change": "ADD", "ret": 1, "det": 9, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], **data_inventory(1, 9)},
             {"id": "D2", "name": "删除", "type": "ILF", "change": "DEL", "ret": 1, "det": 9, "before_fp": 7, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], "before_evidence_ids": ["E1"]},
-            {"id": "D3", "name": "修改", "type": "ILF", "change": "CHG", "ret": 2, "det": 30, "before_fp": 7, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], "before_evidence_ids": ["E1"]},
+            {"id": "D3", "name": "修改", "type": "ILF", "change": "CHG", "ret": 2, "det": 30, "before_fp": 7, "evidence_ids": ["E1"], "detail_evidence_ids": ["E1"], "before_evidence_ids": ["E1"], **data_inventory(2, 30)},
         ]
         out = self.generate(value)
         wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
@@ -118,7 +136,7 @@ class GeneratorTest(unittest.TestCase):
     def test_change_without_before_state_allows_efp_but_not_net_change(self):
         value = sample_model("detailed")
         value.update(count_type="enhancement")
-        value["data_functions"][0].update(change="CHG", detail_evidence_ids=["E1"])
+        value["data_functions"][0].update(change="CHG", detail_evidence_ids=["E1"], **data_inventory(1, 9))
         value["transactions"] = []
         out = self.generate(value)
         wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
@@ -170,6 +188,79 @@ class GeneratorTest(unittest.TestCase):
         self.assertTrue(wb["数据功能"]["J2"].value)
         self.assertFalse(wb["数据功能"]["J3"].value)
         self.assertEqual(wb["汇总"]["B9"].value, "阻断")
+
+    def test_ready_detailed_projects_inventories_and_keeps_them_out_of_markdown(self):
+        value = sample_model("detailed")
+        value["data_functions"][0].update(detail_evidence_ids=["E1"], **data_inventory(1, 9))
+        value["transactions"][0].update(detail_evidence_ids=["E1"], **transaction_inventory(9, ["D1"]))
+        out = self.generate(value)
+        wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
+        self.assertEqual(wb.sheetnames, ["计数说明", "证据登记", "数据功能", "数据功能详表", "事务功能", "事务功能详表", "假设与冲突", "汇总", "复核记录"])
+        self.assertEqual(wb["计数说明"]["B2"].value, "2")
+        self.assertEqual(list(wb["数据功能详表"].values)[1:3], [("D1", "RET", "RET1"), ("D1", "DET", "DET1")])
+        self.assertEqual(list(wb["事务功能详表"].values)[1], ("T1", "DET", "启动触发", "启动触发"))
+        self.assertEqual(list(wb["事务功能详表"].values)[-1], ("T1", "FTR", "D1", None))
+        inventory = (out / "规范化功能清单.md").read_text()
+        self.assertNotIn("启动触发", inventory)
+        self.assertNotIn("RET1", inventory)
+
+    def test_inventory_length_mismatch_and_extra_trigger_block(self):
+        value = sample_model("detailed")
+        value["data_functions"][0].update(detail_evidence_ids=["E1"], **data_inventory(1, 8))
+        value["transactions"][0].update(detail_evidence_ids=["E1"], **transaction_inventory(9, ["D1"]))
+        value["transactions"][0]["dets"][2] = {"name": "再次启动", "side": "启动触发"}
+        out = self.generate(value)
+        report = (out / "估算审阅报告.md").read_text()
+        self.assertIn("详表条数与 RET/DET 不一致", report)
+        self.assertIn("启动触发超过一行", report)
+        wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
+        self.assertFalse(wb["数据功能"]["J2"].value)
+        self.assertFalse(wb["事务功能"]["K2"].value)
+
+    def test_unknown_ftr_and_duplicate_elements_block(self):
+        value = sample_model("detailed")
+        value["data_functions"][0].update(detail_evidence_ids=["E1"], **data_inventory(1, 9))
+        value["data_functions"][0]["dets"][-1] = "DET1"
+        value["transactions"][0].update(detail_evidence_ids=["E1"], **transaction_inventory(9, ["DX"]))
+        out = self.generate(value)
+        report = (out / "估算审阅报告.md").read_text()
+        self.assertIn("详表元素重复", report)
+        self.assertIn("FTR 未引用已登记的数据功能", report)
+
+    def test_rejects_invalid_inventory_shape(self):
+        value = sample_model("detailed")
+        value["data_functions"][0].update(detail_evidence_ids=["E1"], rets=["联系人"], dets=["字段1"])
+        value["transactions"][0].update(detail_evidence_ids=["E1"], dets=[{"name": "启动", "side": "trigger"}], ftrs=["D1"])
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        root = Path(temp.name)
+        input_path = root / "input.json"
+        input_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
+        result = subprocess.run(["python", str(SCRIPT), str(input_path), str(root / "out")], text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("side", result.stderr)
+
+    def test_nonliteral_trigger_or_message_name_blocks(self):
+        value = sample_model("detailed")
+        value["data_functions"][0].update(detail_evidence_ids=["E1"], **data_inventory(1, 9))
+        value["transactions"][0].update(detail_evidence_ids=["E1"], **transaction_inventory(9, ["D1"]))
+        value["transactions"][0]["dets"][0] = {"name": "启动查询", "side": "启动触发"}
+        value["transactions"][0]["dets"][1] = {"name": "功能消息", "side": "消息"}
+        out = self.generate(value)
+        report = (out / "估算审阅报告.md").read_text()
+        self.assertIn("启动触发行名称必须是启动触发", report)
+        self.assertIn("消息行名称必须是消息", report)
+        wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
+        self.assertFalse(wb["事务功能"]["K2"].value)
+
+    def test_confirmed_discriminations_project_as_resolved_issues(self):
+        value = sample_model("detailed")
+        value["data_functions"][0].update(detail_evidence_ids=["E1"], **data_inventory(1, 9))
+        value["transactions"][0].update(detail_evidence_ids=["E1"], **transaction_inventory(9, ["D1"]))
+        value["confirmed_discriminations"] = ["评分任务是年度考核计划的 RET"]
+        out = self.generate(value)
+        wb = load_workbook(out / "功能点计数证据.xlsx", data_only=False)
+        self.assertIn(("已确认判别", "评分任务是年度考核计划的 RET", "已确认", None), list(wb["假设与冲突"].values))
 
     def test_rejects_invalid_function_type_and_counts(self):
         value = sample_model("detailed")

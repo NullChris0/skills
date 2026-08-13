@@ -12,8 +12,9 @@ from openpyxl.styles import Font, PatternFill, Protection
 from openpyxl.utils import get_column_letter
 
 
-SCHEMA_VERSION = "1"
-GENERATOR_VERSION = "1"
+SCHEMA_VERSION = "2"
+GENERATOR_VERSION = "3"
+DET_SIDES = {"输入", "输出", "启动触发", "消息"}
 OVERVIEW_WEIGHTS = {"ILF": 7, "ELF": 5, "EI": 4, "EO": 5, "EQ": 4}
 WEIGHTS = {
     "ILF": {"低": 7, "中": 10, "高": 15},
@@ -27,6 +28,44 @@ WEIGHTS = {
 def evidence_is_usable(evidence, evidence_id):
     item = evidence.get(evidence_id, {})
     return bool(item) and not item.get("conflict") and not (item.get("derived") and not item.get("traceable"))
+
+
+def data_ids(model):
+    return {row.get("id") for row in model.get("data_functions", []) if row.get("id")}
+
+
+def inventory_defects(row, known_data_ids):
+    ident = row.get("id", "未知项")
+    if row.get("type") in ("ILF", "ELF"):
+        rets, dets = row.get("rets"), row.get("dets")
+        if not isinstance(rets, list) or not isinstance(dets, list):
+            return [f"{ident}：缺少详表"]
+        reasons = []
+        if isinstance(row.get("ret"), int) and isinstance(row.get("det"), int) and (len(rets) != row["ret"] or len(dets) != row["det"]):
+            reasons.append(f"{ident}：详表条数与 RET/DET 不一致")
+        if len(rets) != len(set(rets)) or len(dets) != len(set(dets)):
+            reasons.append(f"{ident}：详表元素重复")
+        return reasons
+    dets, ftrs = row.get("dets"), row.get("ftrs")
+    if not isinstance(dets, list) or not isinstance(ftrs, list) or any(not isinstance(item, dict) for item in dets):
+        return [f"{ident}：缺少详表"]
+    reasons = []
+    if isinstance(row.get("det"), int) and isinstance(row.get("ftr"), int) and (len(dets) != row["det"] or len(ftrs) != row["ftr"]):
+        reasons.append(f"{ident}：详表条数与 DET/FTR 不一致")
+    pairs = [(item.get("name"), item.get("side")) for item in dets]
+    if len(pairs) != len(set(pairs)) or len(ftrs) != len(set(ftrs)):
+        reasons.append(f"{ident}：详表元素重复")
+    if sum(item.get("side") == "启动触发" for item in dets) > 1:
+        reasons.append(f"{ident}：启动触发超过一行")
+    if sum(item.get("side") == "消息" for item in dets) > 1:
+        reasons.append(f"{ident}：消息超过一行")
+    if any(item.get("side") == "启动触发" and item.get("name") != "启动触发" for item in dets):
+        reasons.append(f"{ident}：启动触发行名称必须是启动触发")
+    if any(item.get("side") == "消息" and item.get("name") != "消息" for item in dets):
+        reasons.append(f"{ident}：消息行名称必须是消息")
+    if any(item not in known_data_ids for item in ftrs):
+        reasons.append(f"{ident}：FTR 未引用已登记的数据功能")
+    return reasons
 
 
 def data_complexity(ret, det):
@@ -59,17 +98,22 @@ def readiness(model):
     for row in rows:
         if not row.get("evidence_ids") or any(i not in evidence for i in row.get("evidence_ids", [])):
             reasons.append(f"{row.get('id', '未知项')}：缺少可定位证据")
+    known = data_ids(model)
     if model.get("method") == "detailed":
         for row in model.get("data_functions", []):
             if row.get("change") != "DEL" and (not isinstance(row.get("ret"), int) or not isinstance(row.get("det"), int)):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 RET/DET")
             if row.get("change") != "DEL" and (not row.get("detail_evidence_ids") or any(i not in evidence for i in row.get("detail_evidence_ids", []))):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 RET/DET 证据")
+            if row.get("change") != "DEL":
+                reasons.extend(inventory_defects(row, known))
         for row in model.get("transactions", []):
             if row.get("change") != "DEL" and (not isinstance(row.get("det"), int) or not isinstance(row.get("ftr"), int)):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 DET/FTR")
             if row.get("change") != "DEL" and (not row.get("detail_evidence_ids") or any(i not in evidence for i in row.get("detail_evidence_ids", []))):
                 reasons.append(f"{row.get('id', '未知项')}：缺少 DET/FTR 证据")
+            if row.get("change") != "DEL":
+                reasons.extend(inventory_defects(row, known))
     if model.get("count_type") == "enhancement":
         for row in rows:
             if row.get("change") == "DEL" and (not isinstance(row.get("before_fp"), (int, float)) or not row.get("before_evidence_ids") or any(i not in evidence for i in row.get("before_evidence_ids", []))):
@@ -77,13 +121,13 @@ def readiness(model):
     return list(dict.fromkeys(reasons))
 
 
-def row_is_counted(row, evidence, globally_blocked, method, count_type):
+def row_is_counted(row, evidence, globally_blocked, method, count_type, known_data_ids):
     ids = row.get("evidence_ids", [])
     if globally_blocked or not ids or any(not evidence_is_usable(evidence, i) for i in ids):
         return False
     if method == "detailed" and row.get("change") != "DEL":
         counts = (row.get("ret"), row.get("det")) if row.get("type") in ("ILF", "ELF") else (row.get("det"), row.get("ftr"))
-        if any(not isinstance(value, int) or isinstance(value, bool) for value in counts) or not row.get("detail_evidence_ids") or any(not evidence_is_usable(evidence, i) for i in row["detail_evidence_ids"]):
+        if any(not isinstance(value, int) or isinstance(value, bool) for value in counts) or not row.get("detail_evidence_ids") or any(not evidence_is_usable(evidence, i) for i in row["detail_evidence_ids"]) or inventory_defects(row, known_data_ids):
             return False
     if count_type == "enhancement" and row.get("change") == "DEL" and (not isinstance(row.get("before_fp"), (int, float)) or isinstance(row.get("before_fp"), bool) or not row.get("before_evidence_ids") or any(not evidence_is_usable(evidence, i) for i in row["before_evidence_ids"])):
         return False
@@ -120,6 +164,7 @@ def build_workbook(model, reasons, output):
     wb = Workbook()
     wb.remove(wb.active)
     evidence = {e.get("id"): e for e in model.get("evidence", [])}
+    known = data_ids(model)
     blocked = bool(reasons)
     globally_blocked = any(not model.get(field) for field in ("user", "scope", "boundary"))
 
@@ -140,18 +185,37 @@ def build_workbook(model, reasons, output):
     for index, row in enumerate(model.get("data_functions", []), 2):
         complexity = data_complexity(row["ret"], row["det"]) if isinstance(row.get("ret"), int) and isinstance(row.get("det"), int) else "未决"
         fp = OVERVIEW_WEIGHTS.get(row.get("type")) if model["method"] == "overview" else WEIGHTS.get(row.get("type"), {}).get(complexity)
-        included = row_is_counted(row, evidence, globally_blocked, model["method"], model["count_type"])
+        included = row_is_counted(row, evidence, globally_blocked, model["method"], model["count_type"], known)
         data.append([row.get("id"), row.get("name"), row.get("type"), row.get("change", "UNCHANGED"), row.get("ret"), row.get("det"), ",".join(row.get("evidence_ids", [])), complexity, fp, included, f"=IF(J{index},{fp or 0},0)", "待复核", "待复核", "", row.get("before_fp"), ",".join(row.get("detail_evidence_ids", [])), ",".join(row.get("before_evidence_ids", []))])
     style_sheet(data, ("L", "M", "N"))
+
+    data_inv = wb.create_sheet("数据功能详表")
+    data_inv.append(["功能编号", "要素类型", "名称"])
+    for row in model.get("data_functions", []):
+        for name in row.get("rets") or []:
+            data_inv.append([row.get("id"), "RET", name])
+        for name in row.get("dets") or []:
+            data_inv.append([row.get("id"), "DET", name])
+    style_sheet(data_inv)
 
     tx = wb.create_sheet("事务功能")
     tx.append(["编号", "名称", "类型", "变更类型", "DET", "FTR", "证据编号", "主要处理", "复杂度", "变更后FP", "纳入公式", "计数FP", "输入事实复核", "方法复核", "复核意见", "变更前FP", "详细计数证据", "变更前证据"])
     for index, row in enumerate(model.get("transactions", []), 2):
         complexity = transaction_complexity(row.get("type"), row["ftr"], row["det"]) if isinstance(row.get("ftr"), int) and isinstance(row.get("det"), int) else "未决"
         fp = OVERVIEW_WEIGHTS.get(row.get("type")) if model["method"] == "overview" else WEIGHTS.get(row.get("type"), {}).get(complexity)
-        included = row_is_counted(row, evidence, globally_blocked, model["method"], model["count_type"])
+        included = row_is_counted(row, evidence, globally_blocked, model["method"], model["count_type"], known)
         tx.append([row.get("id"), row.get("name"), row.get("type"), row.get("change", "UNCHANGED"), row.get("det"), row.get("ftr"), ",".join(row.get("evidence_ids", [])), row.get("processing", ""), complexity, fp, included, f"=IF(K{index},{fp or 0},0)", "待复核", "待复核", "", row.get("before_fp"), ",".join(row.get("detail_evidence_ids", [])), ",".join(row.get("before_evidence_ids", []))])
     style_sheet(tx, ("M", "N", "O"))
+
+    tx_inv = wb.create_sheet("事务功能详表")
+    tx_inv.append(["功能编号", "要素类型", "名称", "侧"])
+    for row in model.get("transactions", []):
+        for item in row.get("dets") or []:
+            if isinstance(item, dict):
+                tx_inv.append([row.get("id"), "DET", item.get("name"), item.get("side")])
+        for ftr_id in row.get("ftrs") or []:
+            tx_inv.append([row.get("id"), "FTR", ftr_id, ""])
+    style_sheet(tx_inv)
 
     issues = wb.create_sheet("假设与冲突")
     issues.append(["类型", "内容", "状态", "复核意见"])
@@ -159,6 +223,8 @@ def build_workbook(model, reasons, output):
         issues.append(["阻断", reason, "未解决", ""])
     for assumption in model.get("assumptions", []):
         issues.append(["假设", assumption, "待确认", ""])
+    for item in model.get("confirmed_discriminations", []):
+        issues.append(["已确认判别", item, "已确认", ""])
     for item in model.get("non_counted", []):
         issues.append(["非计数需求", f"{item.get('requirement', '')}：{item.get('reason', '')}", "已排除", ""])
     style_sheet(issues, ("C", "D"))
@@ -222,6 +288,10 @@ def main():
             parser.error("data function type must be ILF or ELF")
         if any(value is not None and (not isinstance(value, int) or isinstance(value, bool) or value < 1) for value in (row.get("ret"), row.get("det"))):
             parser.error("data function RET/DET must be positive integers")
+        for key in ("rets", "dets"):
+            value = row.get(key)
+            if value is not None and (not isinstance(value, list) or any(not isinstance(item, str) or not item.strip() for item in value)):
+                parser.error("data function rets/dets must be lists of non-empty strings")
     for row in model.get("transactions", []):
         if row.get("type") not in ("EI", "EO", "EQ"):
             parser.error("transaction function type must be EI, EO, or EQ")
@@ -229,6 +299,12 @@ def main():
             parser.error("transaction DET must be a positive integer")
         if row.get("ftr") is not None and (not isinstance(row["ftr"], int) or isinstance(row["ftr"], bool) or row["ftr"] < 0):
             parser.error("transaction FTR must be a non-negative integer")
+        dets = row.get("dets")
+        if dets is not None and (not isinstance(dets, list) or any(not isinstance(item, dict) or not isinstance(item.get("name"), str) or not item["name"].strip() or item.get("side") not in DET_SIDES for item in dets)):
+            parser.error("transaction dets must be objects with name and side 输入|输出|启动触发|消息")
+        ftrs = row.get("ftrs")
+        if ftrs is not None and (not isinstance(ftrs, list) or any(not isinstance(item, str) or not item.strip() for item in ftrs)):
+            parser.error("transaction ftrs must be a list of non-empty data-function ids")
     for row in model.get("data_functions", []) + model.get("transactions", []):
         if row.get("change", "UNCHANGED") not in ("ADD", "DEL", "CHG", "UNCHANGED"):
             parser.error("change must be ADD, DEL, CHG, or UNCHANGED")

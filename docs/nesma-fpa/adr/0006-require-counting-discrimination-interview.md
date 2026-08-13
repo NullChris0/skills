@@ -1,0 +1,3 @@
+# Require a counting discrimination interview before the count model
+
+Independent detailed-FPA reruns diverged on logical-file splits, elementary-process identity, FTR sets, DET presence, and EO/EQ because agents silently picked one legal reading. After evidence review, `estimate-with-nesma` must interview those remaining forks one at a time without recommending a side, then wait for explicit confirmation of the answers before writing the count model. Confirmed answers belong in the package as `已确认判别`, not in the Skill or the counted application's domain docs. NESMA-fixed mechanics stay in the Skill: complexity comes from the DET/FTR matrices; trigger and message DET names are the literals `启动触发` and `消息`, and the generator blocks any other wording.

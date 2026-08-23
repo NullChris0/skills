@@ -1,0 +1,6 @@
+interface:
+  display_name: "数据割接"
+  short_description: "为旧系统重写建立可追溯的数据割接工作区并验证迁移结果"
+  default_prompt: "Use $data-cutover to establish a traceable workspace and safely iterate this legacy-system data cutover."
+policy:
+  allow_implicit_invocation: true

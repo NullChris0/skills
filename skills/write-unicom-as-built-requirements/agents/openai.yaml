@@ -1,0 +1,6 @@
+interface:
+  display_name: "联通竣工态需求说明书"
+  short_description: "从竣工证据与 NESMA 结论生成联通需求说明书和功能清单"
+  default_prompt: "Use $write-unicom-as-built-requirements to start the intake for one rewritten Unicom system."
+policy:
+  allow_implicit_invocation: false

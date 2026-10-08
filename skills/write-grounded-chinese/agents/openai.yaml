@@ -1,4 +1,0 @@
-interface:
-  display_name: "有据中文写作"
-  short_description: "基于权威材料撰写和保真修改中文正式文档与技术文章内容"
-  default_prompt: "Use $write-grounded-chinese to draft or revise this Chinese technical document from authoritative evidence."

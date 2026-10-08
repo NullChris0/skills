@@ -5,7 +5,7 @@
 ## Skills
 
 - `estimate-with-nesma`：审查证据并生成可复核的 NESMA 概要或详细 FPA 审阅包。
-- `write-grounded-chinese`：基于权威材料撰写和保真修改中文正式文档与技术文章。
+- `write-unicom-as-built-requirements`：从竣工代码证据和已确认的 NESMA 结论生成联通需求说明书与功能清单。
 
 ## 安装
 

@@ -1,4 +1,4 @@
-# 员工年度考核 Stage 1 Golden Fixture
+# 员工年度考核 Golden Fixture
 
 This fixture freezes the confirmed stage-one count:
 
@@ -12,4 +12,7 @@ Source baseline:
 
 Expected result: 11 ILF, 2 ELF, 22 EI, 10 EO, 5 EQ, 267 UFP.
 
-The stage-two delivery model and one-off build scripts are intentionally not part of this stage-one fixture. They remain in the working tree for the next stage-two handoff.
+`delivery/delivery-model.json` freezes the stage-two input for the generic builder.
+`one-off/` preserves the employee-specific reference implementation used to
+calibrate layout; it is not a runtime input and must not be copied into the
+skill.

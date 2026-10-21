@@ -1,0 +1,31 @@
+{
+  "counts": {
+    "data_functions": 13,
+    "transactions": 37,
+    "data_fp": 87,
+    "transaction_fp": 180,
+    "ufp": 267
+  },
+  "mapping": {
+    "rows": 50,
+    "unique": 50
+  },
+  "features": {
+    "rows": 37,
+    "tf_mentions": 37
+  },
+  "yaml": {
+    "http": 45,
+    "elf": 2,
+    "db": 26,
+    "uncounted": 4,
+    "images": 73
+  },
+  "docx": {
+    "chars": 11911,
+    "media": 74,
+    "interface_tables": 47,
+    "tables_7": 26
+  },
+  "status": "PASS"
+}

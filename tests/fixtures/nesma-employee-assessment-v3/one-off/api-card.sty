@@ -1,0 +1,395 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{api-card}[2026/08/30 hx-assessment 接口表四列表卡宏]
+
+% 版式源：一张卡一张四列表，格子对齐 Downloads 旧稿。
+% 成功信封按 envelope 枚举展开；生成器不得把 {code,msg,data}
+% 或 {code,msg,total,rows} 焊进碎片。本文件不得由 generate.py 覆盖。
+
+\RequirePackage{array}
+\RequirePackage{longtable}
+\RequirePackage{hhline}
+\RequirePackage{expl3}
+\RequirePackage{xparse}
+
+\providecommand{\phantomsection}{}
+
+\newlength{\ea@gutterw}
+\newlength{\ea@namew}
+\newlength{\ea@labelw}
+\newlength{\ea@notew}
+\newlength{\ea@metaw}
+\setlength{\ea@gutterw}{1.65cm}
+\setlength{\ea@namew}{3.20cm}
+\setlength{\ea@labelw}{2.60cm}
+
+\renewcommand{\arraystretch}{1.18}
+\setlength{\tabcolsep}{4pt}
+
+% w-列不是 parbox，空左槽不会在 \end{longtable} 时再挤出一行竖线。
+\newcolumntype{G}{w{c}{\ea@gutterw}}
+\newcolumntype{P}{>{\raggedright\arraybackslash}p{\ea@namew}}
+\newcolumntype{Q}{>{\raggedright\arraybackslash}p{\ea@labelw}}
+\newcolumntype{R}{>{\raggedright\arraybackslash}p{\ea@notew}}
+
+\newcounter{ea@depth}
+
+\newcommand{\ea@tt}[1]{{\ttfamily\sloppy #1}}
+
+\newcommand{\ea@span}[1]{%
+  \multicolumn{3}{>{\raggedright\arraybackslash}p{\ea@metaw}|}{#1}%
+}
+
+% |G|P|Q|R| 对应 hhline：|-|-|-|-|；左槽不断横线用 |~|-|-|-|。
+\newcommand{\ea@hline}{\hhline{|-|-|-|-|}}
+\newcommand{\ea@clineg}{\hhline{|~|-|-|-|}}
+
+\newcommand{\ea@ident}[2]{%
+  #1 & \ea@span{#2} \\
+  \ea@hline
+}
+
+\newcommand{\ea@cardskip}{\par\vspace{1.2em}}
+
+% ----- 字段行（列：左槽已由 block 占用 | 名 | 中文名 | 说明）-----
+% \cline 必须是该行的第一个对齐原语，所以首行用 EaFieldFirst。
+\newcommand{\EaFieldFirst}[3]{%
+  &\hspace*{\value{ea@depth}em}\ea@tt{#1}&#2&#3\\%
+}
+\newcommand{\EaField}[3]{%
+  \ea@clineg
+  &\hspace*{\value{ea@depth}em}\ea@tt{#1}&#2&#3\\%
+}
+\newcommand{\EaKids}[1]{%
+  \noalign{\addtocounter{ea@depth}{1}}%
+  #1%
+  \noalign{\addtocounter{ea@depth}{-1}}%
+}
+
+% 左槽顶对齐，不用 multirow：避免表底多出竖线，跨页也不把左槽撑破。
+\newcommand{\ea@block}[3]{%
+  \ifnum#2>0
+    \setcounter{ea@depth}{0}%
+    #1%
+    #3%
+    \ea@hline
+  \fi
+}
+
+\newcommand{\ea@envrow}[3]{%
+  \EaField{#1}{#2}{#3}%
+}
+\newcommand{\ea@envrowfirst}[3]{%
+  \EaFieldFirst{#1}{#2}{#3}%
+}
+
+% begin/end longtable 必须在 2e 下执行；expl3 里 \end{longtable} 会多出左槽空行竖线。
+\newcommand{\ea@opentable}{%
+  \setlength{\ea@notew}{\dimexpr\textwidth-\ea@gutterw-\ea@namew-\ea@labelw-8\tabcolsep-5\arrayrulewidth\relax}%
+  \setlength{\ea@metaw}{\dimexpr\textwidth-\ea@gutterw-4\tabcolsep-3\arrayrulewidth\relax}%
+  \ea@cardskip
+  \phantomsection
+  \noindent
+  \footnotesize
+  \begin{longtable}{|G|P|Q|R|}%
+  \ea@hline
+}
+\newcommand{\ea@closetable}{%
+  \end{longtable}%
+  \normalsize
+  \par
+}
+
+% ----- 键值 -----
+\ExplSyntaxOn
+
+\tl_new:N \l_ea_title_tl
+\tl_new:N \l_ea_method_tl
+\tl_new:N \l_ea_path_tl
+\tl_new:N \l_ea_nesma_tl
+\tl_new:N \l_ea_table_tl
+\tl_new:N \l_ea_auth_tl
+\tl_new:N \l_ea_sameorigin_tl
+\tl_new:N \l_ea_envelope_tl
+\tl_new:N \l_ea_responsejava_tl
+\tl_new:N \l_ea_filekind_tl
+\tl_new:N \l_ea_filename_tl
+\tl_new:N \l_ea_tablename_tl
+\tl_new:N \l_ea_pathparams_tl
+\tl_new:N \l_ea_query_tl
+\tl_new:N \l_ea_body_tl
+\tl_new:N \l_ea_form_tl
+\tl_new:N \l_ea_data_tl
+\tl_new:N \l_ea_rule_tl
+\tl_new:N \l_ea_example_tl
+\tl_new:N \l_ea_id_tl
+\int_new:N \l_ea_pathrows_int
+\int_new:N \l_ea_queryrows_int
+\int_new:N \l_ea_bodyrows_int
+\int_new:N \l_ea_formrows_int
+\int_new:N \l_ea_responserows_int
+\int_new:N \l_ea_datarows_int
+
+\cs_new_protected:Npn \ea_clear:
+  {
+    \tl_clear:N \l_ea_title_tl
+    \tl_clear:N \l_ea_method_tl
+    \tl_clear:N \l_ea_path_tl
+    \tl_clear:N \l_ea_nesma_tl
+    \tl_clear:N \l_ea_table_tl
+    \tl_clear:N \l_ea_auth_tl
+    \tl_clear:N \l_ea_sameorigin_tl
+    \tl_clear:N \l_ea_envelope_tl
+    \tl_clear:N \l_ea_responsejava_tl
+    \tl_clear:N \l_ea_filekind_tl
+    \tl_clear:N \l_ea_filename_tl
+    \tl_clear:N \l_ea_tablename_tl
+    \tl_clear:N \l_ea_pathparams_tl
+    \tl_clear:N \l_ea_query_tl
+    \tl_clear:N \l_ea_body_tl
+    \tl_clear:N \l_ea_form_tl
+    \tl_clear:N \l_ea_data_tl
+    \tl_clear:N \l_ea_rule_tl
+    \tl_clear:N \l_ea_example_tl
+    \tl_clear:N \l_ea_id_tl
+    \int_zero:N \l_ea_pathrows_int
+    \int_zero:N \l_ea_queryrows_int
+    \int_zero:N \l_ea_bodyrows_int
+    \int_zero:N \l_ea_formrows_int
+    \int_zero:N \l_ea_responserows_int
+    \int_zero:N \l_ea_datarows_int
+  }
+
+\keys_define:nn { ea / card }
+  {
+    title         .tl_set:N  = \l_ea_title_tl,
+    method        .tl_set:N  = \l_ea_method_tl,
+    path          .tl_set:N  = \l_ea_path_tl,
+    nesma         .tl_set:N  = \l_ea_nesma_tl,
+    table         .tl_set:N  = \l_ea_table_tl,
+    auth          .tl_set:N  = \l_ea_auth_tl,
+    sameorigin    .tl_set:N  = \l_ea_sameorigin_tl,
+    envelope      .tl_set:N  = \l_ea_envelope_tl,
+    responsejava  .tl_set:N  = \l_ea_responsejava_tl,
+    filekind      .tl_set:N  = \l_ea_filekind_tl,
+    filename      .tl_set:N  = \l_ea_filename_tl,
+    tablename     .tl_set:N  = \l_ea_tablename_tl,
+    pathparams    .tl_set:N  = \l_ea_pathparams_tl,
+    query         .tl_set:N  = \l_ea_query_tl,
+    body          .tl_set:N  = \l_ea_body_tl,
+    form          .tl_set:N  = \l_ea_form_tl,
+    data          .tl_set:N  = \l_ea_data_tl,
+    rule          .tl_set:N  = \l_ea_rule_tl,
+    example       .tl_set:N  = \l_ea_example_tl,
+    pathrows      .int_set:N = \l_ea_pathrows_int,
+    queryrows     .int_set:N = \l_ea_queryrows_int,
+    bodyrows      .int_set:N = \l_ea_bodyrows_int,
+    formrows      .int_set:N = \l_ea_formrows_int,
+    responserows  .int_set:N = \l_ea_responserows_int,
+    datarows      .int_set:N = \l_ea_datarows_int,
+  }
+
+\cs_new:Npn \ea_auth_gloss:n #1
+  {
+    \str_case:nnF {#1}
+      {
+        {admin}          {管理端（\texttt{admin} 或 \texttt{ea-admin}）}
+        {employee}       {员工端（实名登录，仅限本人）}
+        {rating-session} {匿名评分会话 Cookie}
+      }
+      {#1}
+  }
+\cs_generate_variant:Nn \ea_auth_gloss:n { V }
+
+\cs_new_protected:Npn \ea_auth_row:
+  {
+    \ea@ident {鉴权：}
+      {
+        \ea_auth_gloss:V \l_ea_auth_tl
+        \str_if_eq:VnT \l_ea_sameorigin_tl { true } { ；校验同源 }
+      }
+  }
+
+\ExplSyntaxOff
+
+% expl3 bool_lazy in the middle of a table is too easy to get wrong.
+% 信封行用 2e 宏按枚举展开，生成器只传枚举与业务字段。
+
+\newcommand{\ea@ajaxenv}{%
+  \ea@envrowfirst{code}{状态码}{成功为 200}%
+  \ea@envrow{msg}{提示信息}{默认「操作成功」}%
+}
+
+\newcommand{\ea@tableenv}{%
+  \ea@envrowfirst{code}{状态码}{成功为 200}%
+  \ea@envrow{msg}{提示信息}{}%
+  \ea@envrow{total}{总行数}{符合条件的总行数}%
+}
+
+\newcommand{\ea@key@namepattern}{name\_pattern}
+
+\newcommand{\ea@fileenv}{%
+  &\multicolumn{3}{>{\raggedright\arraybackslash}p{\ea@metaw}|}{成功响应不是 JSON}\\%
+}
+
+\newcommand{\ea@example}[1]{%
+  &\multicolumn{3}{>{\raggedright\arraybackslash\ttfamily}p{\ea@metaw}|}{#1}\\%
+}
+
+\ExplSyntaxOn
+
+\cs_new_protected:Npn \ea_fill_response:
+  {
+    \str_case:VnF \l_ea_envelope_tl
+      {
+        {ajax-result}
+          {
+            \ea@ajaxenv
+            \bool_if:nT
+              {
+                ! \tl_if_empty_p:N \l_ea_data_tl
+                ||
+                ! \tl_if_empty_p:N \l_ea_responsejava_tl
+              }
+              {
+                \tl_if_empty:NTF \l_ea_data_tl
+                  { \ea@envrow {data} {业务载荷} { \l_ea_responsejava_tl } }
+                  {
+                    \ea@envrow {data} {业务载荷} { \l_ea_responsejava_tl }
+                    \noalign { \addtocounter {ea@depth} {1} }
+                    \l_ea_data_tl
+                    \noalign { \addtocounter {ea@depth} {-1} }
+                  }
+              }
+          }
+        {table-data-info}
+          {
+            \ea@tableenv
+            \tl_if_empty:NTF \l_ea_data_tl
+              { \ea@envrow {rows} {分页行} { \l_ea_responsejava_tl } }
+              {
+                \ea@envrow {rows} {分页行} { \l_ea_responsejava_tl }
+                \noalign { \addtocounter {ea@depth} {1} }
+                \l_ea_data_tl
+                \noalign { \addtocounter {ea@depth} {-1} }
+              }
+          }
+        {file-stream}
+          {
+            \ea@fileenv
+            \ea@envrow {kind} {文件种类} { \l_ea_filekind_tl }
+            \tl_if_empty:NF \l_ea_filename_tl
+              { \ea@envrow {\ea@key@namepattern} {文件名模式} { \l_ea_filename_tl } }
+          }
+      }
+      {
+        \PackageError {api-card} {Unknown~envelope~\l_ea_envelope_tl} {}
+      }
+  }
+
+\cs_new_protected:Npn \ea_http_body:
+  {
+    \ea@ident {接口名称：}
+      {
+        \l_ea_title_tl
+        \hfill
+        \tl_if_empty:NF \l_ea_table_tl { 表~\l_ea_table_tl }
+      }
+    \ea@ident {接口 URL：} { \texttt{\l_ea_method_tl\c_space_tl\l_ea_path_tl} }
+    \tl_if_empty:NF \l_ea_auth_tl
+      { \ea_auth_row: }
+    \tl_if_empty:NF \l_ea_rule_tl
+      { \ea@ident {调用规则：} { \l_ea_rule_tl } }
+    \int_compare:nNnT { \int_use:N \l_ea_pathrows_int } > { 0 }
+      { \ea@block {路径参数} { \int_use:N \l_ea_pathrows_int } { \l_ea_pathparams_tl } }
+    \int_compare:nNnT { \int_use:N \l_ea_queryrows_int } > { 0 }
+      { \ea@block {查询参数} { \int_use:N \l_ea_queryrows_int } { \l_ea_query_tl } }
+    \int_compare:nNnT { \int_use:N \l_ea_bodyrows_int } > { 0 }
+      { \ea@block {请求体} { \int_use:N \l_ea_bodyrows_int } { \l_ea_body_tl } }
+    \int_compare:nNnT { \int_use:N \l_ea_formrows_int } > { 0 }
+      { \ea@block {表单参数} { \int_use:N \l_ea_formrows_int } { \l_ea_form_tl } }
+    \tl_if_empty:NTF \l_ea_example_tl
+      {
+        \int_compare:nNnT { \int_use:N \l_ea_responserows_int } > { 0 }
+          { \ea@block {响应参数} { \int_use:N \l_ea_responserows_int } { \ea_fill_response: } }
+        \ea@closetable
+      }
+      {
+        \int_compare:nNnT { \int_use:N \l_ea_responserows_int } > { 0 }
+          { \ea@block {响应参数} { \int_use:N \l_ea_responserows_int } { \ea_fill_response: } }
+        \ea@block {响应示例} {1} { \ea@example { \l_ea_example_tl } }
+        \ea@closetable
+      }
+  }
+
+\cs_new_protected:Npn \ea_elf_body:
+  {
+    \ea@ident {接口名称：}
+      {
+        \l_ea_title_tl
+        \hfill
+        \tl_if_empty:NF \l_ea_table_tl { 表~\l_ea_table_tl }
+      }
+    \tl_if_empty:NF \l_ea_rule_tl
+      { \ea@ident {调用规则：} { \l_ea_rule_tl } }
+    \tl_if_empty:NTF \l_ea_example_tl
+      {
+        \int_compare:nNnT { \int_use:N \l_ea_datarows_int } > { 0 }
+          { \ea@block {读取字段} { \int_use:N \l_ea_datarows_int } { \l_ea_data_tl } }
+        \ea@closetable
+      }
+      {
+        \int_compare:nNnT { \int_use:N \l_ea_datarows_int } > { 0 }
+          { \ea@block {读取字段} { \int_use:N \l_ea_datarows_int } { \l_ea_data_tl } }
+        \ea@block {响应示例} {1} { \ea@example { \l_ea_example_tl } }
+        \ea@closetable
+      }
+  }
+
+\NewDocumentCommand { \EaHttpCard } { m +m }
+  {
+    \ea_clear:
+    \tl_set:Nn \l_ea_id_tl {#1}
+    \keys_set:nn { ea / card } {#2}
+    \label {api:#1}
+    \ea@opentable
+    \ea_http_body:
+  }
+
+\NewDocumentCommand { \EaElfCard } { m +m }
+  {
+    \ea_clear:
+    \tl_set:Nn \l_ea_id_tl {#1}
+    \keys_set:nn { ea / card } {#2}
+    \label {api:#1}
+    \ea@opentable
+    \ea_elf_body:
+  }
+
+\cs_new_protected:Npn \ea_db_body:
+  {
+    \ea@ident {表名称：}
+      {
+        \l_ea_title_tl
+        \hfill
+        \tl_if_empty:NF \l_ea_table_tl { 表~\l_ea_table_tl }
+      }
+    \tl_if_empty:NF \l_ea_tablename_tl
+      { \ea@ident {物理表：} { \texttt{\l_ea_tablename_tl} } }
+    \tl_if_empty:NF \l_ea_rule_tl
+      { \ea@ident {说明：} { \l_ea_rule_tl } }
+    \int_compare:nNnT { \int_use:N \l_ea_datarows_int } > { 0 }
+      { \ea@block {字段} { \int_use:N \l_ea_datarows_int } { \l_ea_data_tl } }
+    \ea@closetable
+  }
+
+\NewDocumentCommand { \EaDbCard } { m +m }
+  {
+    \ea_clear:
+    \tl_set:Nn \l_ea_id_tl {#1}
+    \keys_set:nn { ea / card } {#2}
+    \label {db:#1}
+    \ea@opentable
+    \ea_db_body:
+  }
+
+\ExplSyntaxOff

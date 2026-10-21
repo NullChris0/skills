@@ -1,6 +1,0 @@
-interface:
-  display_name: "NESMA 功能点估算"
-  short_description: "从已确认证据生成四表 NESMA 计数包和成稿用 JSON"
-  default_prompt: "Use $estimate-with-nesma to run one confirmed NESMA count and produce the four-sheet package."
-policy:
-  allow_implicit_invocation: false

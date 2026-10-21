@@ -1,0 +1,6 @@
+interface:
+  display_name: "NESMA 功能点计数"
+  short_description: "从已确认证据生成四表 NESMA 计数包和计数模型"
+  default_prompt: "Use $nesma-count to run one confirmed NESMA count and produce the four-sheet package."
+policy:
+  allow_implicit_invocation: false

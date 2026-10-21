@@ -67,5 +67,36 @@ class RenderCardsTest(unittest.TestCase):
         self.assertTrue((self.root / "images/db.example.png").is_file())
 
 
+class CallRuleTextTest(unittest.TestCase):
+    def test_call_rule_prints_business_text_only(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("render_cards", RENDER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        tex = module.http_card(
+            {
+                "id": "item.list",
+                "kind": "http",
+                "title": "查询记录",
+                "nesma": "TF-01",
+                "section": "7.1",
+                "table": "7-1",
+                "caption": "查询记录",
+                "method": "GET",
+                "path": "/items",
+                "controller": "ItemController#list",
+                "auth": "管理端",
+                "rules": ["按名称筛选。"],
+                "response": [{"name": "id", "type": "string"}],
+            },
+            Path("item.list.yaml"),
+        )
+        self.assertIn("rule={按名称筛选。}", tex)
+        self.assertIn("auth={管理端}", tex)
+        self.assertNotIn("ItemController", tex)
+        self.assertNotIn("控制器", tex)
+
+
 if __name__ == "__main__":
     unittest.main()

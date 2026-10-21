@@ -1,6 +1,0 @@
-interface:
-  display_name: "联通竣工态需求说明书"
-  short_description: "从阶段一 JSON 生成联通需求说明书 Word、功能清单和接口表图片"
-  default_prompt: "Use $write-unicom-as-built-requirements to build one Unicom delivery from a confirmed NESMA JSON model."
-policy:
-  allow_implicit_invocation: false

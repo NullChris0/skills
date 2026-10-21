@@ -1,9 +1,9 @@
 \NeedsTeXFormat{LaTeX2e}
-\ProvidesPackage{api-card}[2026/08/30 hx-assessment 接口表四列表卡宏]
+\ProvidesPackage{api-card}[2026/10/21 interface card layout sample]
 
-% 版式源：一张卡一张四列表，格子对齐 Downloads 旧稿。
-% 成功信封按 envelope 枚举展开；生成器不得把 {code,msg,data}
-% 或 {code,msg,total,rows} 焊进碎片。本文件不得由 generate.py 覆盖。
+% 版式范本。鉴权行原样印出 YAML 的 auth，不内置角色词表。
+% 成功信封、宏前缀 \ea 属于本范本；换项目时复制本文件再改写。
+% 生成器不得把 {code,msg,data} 或 {code,msg,total,rows} 焊进碎片。
 
 \RequirePackage{array}
 \RequirePackage{longtable}
@@ -188,23 +188,11 @@
     datarows      .int_set:N = \l_ea_datarows_int,
   }
 
-\cs_new:Npn \ea_auth_gloss:n #1
-  {
-    \str_case:nnF {#1}
-      {
-        {admin}          {管理端（\texttt{admin} 或 \texttt{ea-admin}）}
-        {employee}       {员工端（实名登录，仅限本人）}
-        {rating-session} {匿名评分会话 Cookie}
-      }
-      {#1}
-  }
-\cs_generate_variant:Nn \ea_auth_gloss:n { V }
-
 \cs_new_protected:Npn \ea_auth_row:
   {
     \ea@ident {鉴权：}
       {
-        \ea_auth_gloss:V \l_ea_auth_tl
+        \l_ea_auth_tl
         \str_if_eq:VnT \l_ea_sameorigin_tl { true } { ；校验同源 }
       }
   }

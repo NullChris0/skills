@@ -144,7 +144,7 @@ def http_card(record: dict[str, Any], source: Path) -> str:
         required(record, key, source)
     method = as_text(required(record, "method", source)).upper()
     path = required(record, "path", source)
-    controller = as_text(required(record, "controller", source))
+    as_text(required(record, "controller", source))
     auth = required(record, "auth", source)
     request = optional_fields(record, "request", source)
     response_value = record.get("response")
@@ -173,8 +173,7 @@ def http_card(record: dict[str, Any], source: Path) -> str:
     if not response and envelope != "file-stream" and record.get("data"):
         response = optional_fields(record, "data", source)
 
-    rules = rules_text(record, source)
-    rule = "；".join(part for part in (f"控制器：{controller}", rules) if part)
+    rule = rules_text(record, source)
     request_key = "query" if method in {"GET", "HEAD"} else "body"
     response_rows = field_rows(response, source)
     parts = [

@@ -1,5 +1,5 @@
 ---
-name: estimate-with-nesma
+name: nesma-count
 description: 从已确认证据生成四表 NESMA 计数包和供成稿使用计数模型。
 disable-model-invocation: true
 ---

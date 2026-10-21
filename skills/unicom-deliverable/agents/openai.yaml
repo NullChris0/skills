@@ -1,0 +1,6 @@
+interface:
+  display_name: "联通交付稿"
+  short_description: "从阶段一 JSON 生成联通交付 Word、功能清单和接口表"
+  default_prompt: "Use $unicom-deliverable to build one Unicom delivery from a confirmed NESMA JSON model."
+policy:
+  allow_implicit_invocation: false

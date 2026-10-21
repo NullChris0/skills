@@ -323,11 +323,24 @@ def find_dotnet():
     return Path(found)
 
 
+def card_style(delivery, model_path):
+    raw = delivery.get("card_style")
+    if not raw:
+        return STYLE
+    path = Path(raw)
+    if not path.is_absolute():
+        path = model_path.parent / path
+    require(path.is_file(), f"卡片样式不存在：{path}")
+    require(path.name == "api-card.sty", "卡片样式文件名必须是 api-card.sty")
+    return path
+
+
 def build(model_path, output):
     require(model_path.is_file(), f"交付模型不存在：{model_path}")
     require(not output.exists() or (output.is_dir() and not any(output.iterdir())), f"输出目录必须不存在或为空：{output}")
     delivery = json.loads(model_path.read_text(encoding="utf-8"))
     model, document, rows, data, transactions = check_model(delivery)
+    style = card_style(delivery, model_path)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=f".{output.name}-", dir=output.parent) as temporary:
@@ -339,7 +352,7 @@ def build(model_path, output):
         interface_dir.mkdir()
         write_yaml(interface_dir, delivery)
         rendered = subprocess.run(
-            [sys.executable, str(RENDER_CARDS), str(interface_dir), str(STYLE)],
+            [sys.executable, str(RENDER_CARDS), str(interface_dir), str(style)],
             text=True,
             capture_output=True,
         )

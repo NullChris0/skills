@@ -4,8 +4,8 @@
 
 ## Skills
 
-- `estimate-with-nesma`：从已确认证据生成四表 NESMA 计数包和成稿用 JSON。
-- `write-unicom-as-built-requirements`：从阶段一 JSON 生成联通需求说明书 Word、功能清单 XLSX 和接口表图片。
+- `nesma-count`：从已确认证据生成四表 NESMA 计数包和计数模型。
+- `unicom-deliverable`：从阶段一 JSON 生成联通交付 Word、功能清单和接口表。
 
 ## 安装
 
@@ -27,10 +27,10 @@ scripts/link-skills.sh
 
 ```bash
 python -m unittest \
-  skills/estimate-with-nesma/tests/test_generate_count_package.py \
-  skills/write-unicom-as-built-requirements/tests/test_build_delivery.py \
-  skills/write-unicom-as-built-requirements/tests/test_render_cards.py \
-  skills/write-unicom-as-built-requirements/tests/test_validate_delivery.py
+  skills/nesma-count/tests/test_generate_count_package.py \
+  skills/unicom-deliverable/tests/test_build_delivery.py \
+  skills/unicom-deliverable/tests/test_render_cards.py \
+  skills/unicom-deliverable/tests/test_validate_delivery.py
 bash tests/test_link_skills.sh
 ```
 

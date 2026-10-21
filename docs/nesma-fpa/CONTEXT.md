@@ -1,6 +1,6 @@
 # NESMA FPA
 
-本语境描述 `estimate-with-nesma` Skill 从外部知识材料中筛选可执行知识和执行功能点计数的方式。
+本语境描述 `nesma-count` Skill 从外部知识材料中筛选可执行知识和执行功能点计数的方式。
 
 ## Language
 
@@ -13,7 +13,7 @@ _Avoid_：全部来源材料、候选知识
 _Avoid_：文档完成度、需求篇幅
 
 **估算启动访谈（Estimation Intake Interview）**：
-`estimate-with-nesma` 在证据审查前进行的确认过程；Agent 先从当前 prompt、对话、交接材料和仓库事实归集启动参数，再把仍缺失、歧义或必须由用户决定的内容合并成一次询问，并在用户确认完整参数集后开始估算。
+`nesma-count` 在证据审查前进行的确认过程；Agent 先从当前 prompt、对话、交接材料和仓库事实归集启动参数，再把仍缺失、歧义或必须由用户决定的内容合并成一次询问，并在用户确认完整参数集后开始估算。
 _Avoid_：静默采用推断、一次性参数表、正式计数
 
 **估算启动参数集（Estimation Intake Parameters）**：

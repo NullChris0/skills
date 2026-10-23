@@ -13,6 +13,8 @@ from zipfile import ZipFile
 import yaml
 from openpyxl import load_workbook
 
+from delivery_quality import check_document_model, check_feature_granularity
+
 
 def fail(message):
     raise SystemExit(f"FAIL: {message}")
@@ -152,11 +154,17 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("count_model", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--delivery-model", type=Path)
     args = parser.parse_args()
     model = json.loads(args.count_model.read_text(encoding="utf-8"))
     require("assumptions" not in model and "unresolved" not in model, "阶段一模型含假设或未决项")
     ids, data, transactions = expected_ids(model)
     ufp = sum(row["fp"] for row in data + transactions)
+    delivery_path = args.delivery_model or args.output / "delivery-model.json"
+    require(delivery_path.exists(), "缺少 delivery-model.json")
+    delivery = json.loads(delivery_path.read_text(encoding="utf-8"))
+    check_document_model(model, delivery.get("document"), delivery.get("mappings"))
+    check_feature_granularity(delivery.get("features"), transactions)
     mapping = check_mapping(args.output, data + transactions, ids)
     features = check_features(args.output, transactions)
     interfaces = check_interfaces(args.output, ids)

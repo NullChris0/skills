@@ -12,13 +12,21 @@ from openpyxl import load_workbook
 REPO = Path(__file__).parents[3]
 SCRIPT = Path(__file__).parents[1] / "scripts" / "validate_delivery.py"
 COUNT = REPO / "tests/fixtures/nesma-employee-assessment-v3/count/计数模型.json"
-DELIVERY = Path("/home/nc/projects/work/hx-employee-assessment-delivery-v3-new-v2")
+DELIVERY = Path("/home/nc/projects/work/M域交付材料/员工考核域-2026-1021-v1")
+DELIVERY_MODEL = REPO / "tests/fixtures/nesma-employee-assessment-v3/delivery/delivery-model.json"
 
 
 class DeliveryValidatorTest(unittest.TestCase):
     def run_validator(self, output):
         return subprocess.run(
-            [sys.executable, str(SCRIPT), str(COUNT), str(output)],
+            [
+                sys.executable,
+                str(SCRIPT),
+                str(COUNT),
+                str(output),
+                "--delivery-model",
+                str(DELIVERY_MODEL),
+            ],
             text=True,
             capture_output=True,
         )

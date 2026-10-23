@@ -17,6 +17,8 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from delivery_quality import check_document_model, check_feature_granularity
+
 
 SKILL = Path(__file__).parents[1]
 TEMPLATE = SKILL / "assets/联通功能清单模板.xlsx"
@@ -80,6 +82,8 @@ def check_model(delivery):
     remarks = "\n".join(str(row.get("remark", "")) for row in features)
     for transaction in transactions:
         require(remarks.count(transaction["id"]) == 1, f"功能清单未唯一覆盖 {transaction['id']}")
+    check_document_model(model, document, mappings)
+    check_feature_granularity(features, transactions)
     return model, document, rows, data, transactions
 
 

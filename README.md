@@ -29,6 +29,7 @@ scripts/link-skills.sh
 python -m unittest \
   skills/nesma-count/tests/test_generate_count_package.py \
   skills/unicom-deliverable/tests/test_build_delivery.py \
+  skills/unicom-deliverable/tests/test_delivery_quality.py \
   skills/unicom-deliverable/tests/test_render_cards.py \
   skills/unicom-deliverable/tests/test_validate_delivery.py
 bash tests/test_link_skills.sh

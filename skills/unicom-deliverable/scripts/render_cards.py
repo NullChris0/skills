@@ -256,7 +256,6 @@ def elf_card(record: dict[str, Any], source: Path) -> str:
         [
             rf"\EaElfCard{{{tex_id(record['id'], source)}}}{{%",
             f"  title={{{tex_escape(record['title'])}}},",
-            f"  nesma={{{tex_escape(record['nesma'])}}},",
             f"  table={{{tex_escape(record['table'])}}},",
             "  data={",
             field_rows(fields, source),
@@ -280,8 +279,6 @@ def db_card(record: dict[str, Any], source: Path) -> str:
                 fail(f"{source}: columns 项缺少必需字段 {key}")
     parts = [rf"\EaDbCard{{{tex_id(record['id'], source)}}}{{%"]
     parts.append(f"  title={{{tex_escape(record['title'])}}},")
-    if record.get("nesma"):
-        parts.append(f"  nesma={{{tex_escape(record['nesma'])}}},")
     if record.get("table"):
         parts.append(f"  table={{{tex_escape(record['table'])}}},")
     parts.extend(

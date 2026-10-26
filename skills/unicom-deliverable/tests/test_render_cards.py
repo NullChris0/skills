@@ -97,6 +97,44 @@ class CallRuleTextTest(unittest.TestCase):
         self.assertNotIn("ItemController", tex)
         self.assertNotIn("控制器", tex)
 
+    def test_data_model_cards_do_not_print_nesma(self):
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location("render_cards", RENDER)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        db = module.db_card(
+            {
+                "id": "db.item",
+                "kind": "db",
+                "title": "记录物理表",
+                "nesma": "DF-01",
+                "section": "7.1.1",
+                "table": "7.1-1",
+                "caption": "表7.1-1 记录物理表",
+                "tableName": "item",
+                "columns": [{"name": "id", "type": "bigint"}],
+            },
+            Path("db.item.yaml"),
+        )
+        self.assertNotIn("DF-01", db)
+        elf = module.elf_card(
+            {
+                "id": "master.item",
+                "kind": "elf",
+                "title": "外部记录",
+                "nesma": "DF-02",
+                "section": "7.1.2",
+                "table": "7.1-2",
+                "caption": "表7.1-2 外部记录",
+                "source": "外部应用",
+                "direction": "外部应用 -> 本应用",
+                "fields": ["id"],
+            },
+            Path("master.item.yaml"),
+        )
+        self.assertNotIn("DF-02", elf)
+
 
 if __name__ == "__main__":
     unittest.main()

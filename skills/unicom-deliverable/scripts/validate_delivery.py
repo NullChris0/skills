@@ -33,7 +33,7 @@ def expected_ids(model):
     return [row["id"] for row in data] + [row["id"] for row in transactions], data, transactions
 
 
-def check_mapping(output, model_rows, ids):
+def check_mapping(output, model_rows, ids, features):
     path = output / "映射表.xlsx"
     require(path.exists(), f"缺少 {path.name}")
     workbook = load_workbook(path, data_only=True)
@@ -46,13 +46,51 @@ def check_mapping(output, model_rows, ids):
     require(all(row[7] == "已覆盖" for row in rows), "映射表存在未覆盖项")
     require(all(row[4] and row[5] for row in rows), "映射表功能清单行或正文位置为空")
     by_id = {row["id"]: row for row in model_rows}
+    feature_ids = {feature.get("row_id") for feature in features}
+    feature_by_transaction = {
+        feature.get("tf"): feature.get("row_id")
+        for feature in features
+        if feature.get("tf")
+    }
     for mapped_row in rows:
         source = by_id[mapped_row[0]]
         require(
             (mapped_row[1], mapped_row[2], mapped_row[3]) == (source["type"], source["name"], source["fp"]),
             f"映射表 {mapped_row[0]} 的类型、名称或 FP 与计数模型不一致",
         )
+        mapped_features = [
+            item.strip()
+            for item in re.split(r"[、,，]", str(mapped_row[4] or ""))
+            if item.strip()
+        ]
+        require(
+            mapped_features and all(item in feature_ids for item in mapped_features),
+            f"映射表 {mapped_row[0]} 的对应功能清单行不是有效行号",
+        )
+        if source["type"] in {"EI", "EO", "EQ"}:
+            require(
+                mapped_features == [feature_by_transaction.get(mapped_row[0])],
+                f"映射表 {mapped_row[0]} 必须唯一对应一行功能清单",
+            )
     return {"rows": len(rows)}
+
+
+def check_toc(delivery):
+    sections = delivery.get("document", {}).get("sections", [])
+    entries = [
+        section
+        for section in sections
+        if isinstance(section.get("level"), int) and 1 <= section["level"] <= 4
+    ]
+    require(entries, "Word 目录没有一级至四级条目")
+    hints = []
+    for section in entries:
+        raw = str(section.get("page_hint", ""))
+        require(raw.isdigit(), f"目录条目「{section.get('heading')}」缺少页码")
+        hints.append(int(raw))
+    require(all(hint > 1 for hint in hints), "目录页码仍包含占位页 1")
+    require(hints == sorted(hints), "目录页码没有随章节顺序递增")
+    return {"entries": len(hints), "first": hints[0], "last": hints[-1]}
 
 
 def check_features(output, transactions):
@@ -165,10 +203,11 @@ def main():
     delivery = json.loads(delivery_path.read_text(encoding="utf-8"))
     check_document_model(model, delivery.get("document"), delivery.get("mappings"))
     check_feature_granularity(delivery.get("features"), transactions)
-    mapping = check_mapping(args.output, data + transactions, ids)
+    mapping = check_mapping(args.output, data + transactions, ids, delivery.get("features", []))
     features = check_features(args.output, transactions)
     interfaces = check_interfaces(args.output, ids)
     docx = check_docx(args.output, ufp, ids, interfaces["images"])
+    toc = check_toc(delivery)
     print(json.dumps({
         "status": "PASS",
         "counts": {"data_functions": len(data), "transactions": len(transactions), "ufp": ufp},
@@ -176,6 +215,7 @@ def main():
         "features": features,
         "interfaces": interfaces,
         "docx": docx,
+        "toc": toc,
     }, ensure_ascii=False, indent=2))
 
 

@@ -1,4 +1,5 @@
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -275,7 +276,7 @@ public static class Program
         JsonObject document)
     {
         package.PackageProperties.Title = S(document["title"]);
-        package.PackageProperties.Subject = S(document["subtitle"]);
+        package.PackageProperties.Subject = "需求说明书";
     }
 
     private static (string HeaderId, string FooterId) AddHeaderFooter(
@@ -363,21 +364,14 @@ public static class Program
                 new SpacingBetweenLines { Before = "0", After = "180" },
                 new Indentation { FirstLine = "0" },
                 new Justification { Val = JustificationValues.Center }),
-            CoverRun(S(document["subtitle"]), "28", true)));
-
-        body.Append(new Paragraph(
-            new ParagraphProperties(
-                new SpacingBetweenLines { Before = "120", After = "0" },
-                new Indentation { FirstLine = "0" },
-                new Justification { Val = JustificationValues.Center }),
-            CoverRun(S(document["version"]), "22", false)));
+            CoverRun("需求说明书", "28", true)));
 
         body.Append(new Paragraph(
             new ParagraphProperties(
                 new SpacingBetweenLines { Before = "180", After = "0" },
                 new Indentation { FirstLine = "0" },
                 new Justification { Val = JustificationValues.Center }),
-            CoverRun(S(document["date"]), "22", false)));
+            CoverRun(MonthText(S(document["date"])), "22", false)));
 
         body.Append(new Paragraph(new ParagraphProperties(
             new SectionProperties(
@@ -396,6 +390,14 @@ public static class Program
                     Header = 0,
                     Footer = 0
                 }))));
+    }
+
+    private static string MonthText(string value)
+    {
+        Match match = Regex.Match(value, @"(\d{4})年(\d{1,2})月");
+        if (!match.Success)
+            throw new InvalidDataException("document.date 必须包含 YYYY年M月");
+        return $"{match.Groups[1].Value}年{match.Groups[2].Value}月";
     }
 
     private static Run CoverRun(string text, string size, bool bold)
@@ -474,14 +476,21 @@ public static class Program
         JsonArray sections,
         string outputDirectory)
     {
-        foreach (JsonNode? section in sections)
+        for (int index = 0; index < sections.Count; index++)
         {
-            if (section is not JsonObject sectionObject)
+            if (sections[index] is not JsonObject sectionObject)
                 throw new InvalidDataException("Each section must be an object.");
+
+            int level = I(sectionObject["level"]);
+            JsonObject? next = index + 1 < sections.Count
+                ? sections[index + 1] as JsonObject
+                : null;
+            bool tight = next is not null && I(next["level"]) > level;
 
             body.Append(CreateHeading(
                 S(sectionObject["heading"]),
-                I(sectionObject["level"])));
+                level,
+                tight));
 
             if (sectionObject["paras"] is JsonArray paragraphs)
             {
@@ -524,7 +533,7 @@ public static class Program
                 }
             }
 
-            if (sectionObject["meta"] is JsonArray metadata)
+            if (sectionObject["meta"] is JsonArray metadata && metadata.Count > 0)
             {
                 Table table = CreateTableWithWidths(new[] { 1900, 6400 });
                 foreach (JsonNode? item in metadata)
@@ -559,7 +568,7 @@ public static class Program
         }
     }
 
-    private static Paragraph CreateHeading(string text, int level)
+    private static Paragraph CreateHeading(string text, int level, bool tight)
     {
         string style = level switch
         {
@@ -569,8 +578,26 @@ public static class Program
             4 => "Heading4",
             _ => "Heading5"
         };
+        var properties = new ParagraphProperties(
+            new ParagraphStyleId { Val = style });
+        if (tight)
+        {
+            string before = level switch
+            {
+                <= 1 => "0",
+                2 => "320",
+                3 => "280",
+                4 => "240",
+                _ => "200"
+            };
+            properties.Append(new SpacingBetweenLines
+            {
+                Before = before,
+                After = "0"
+            });
+        }
         return new Paragraph(
-            new ParagraphProperties(new ParagraphStyleId { Val = style }),
+            properties,
             new Run(new Text(text)));
     }
 

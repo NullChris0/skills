@@ -17,7 +17,13 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
-from delivery_quality import check_document_model, check_feature_granularity
+from delivery_quality import (
+    REFERENCE_DOCUMENTS,
+    check_document_model,
+    check_feature_granularity,
+    compact,
+    descendants,
+)
 
 
 SKILL = Path(__file__).parents[1]
@@ -26,6 +32,7 @@ STYLE = SKILL / "assets/api-card.sty"
 DOCX = SKILL / "scripts/docx"
 RENDER_CARDS = SKILL / "scripts/render_cards.py"
 VALIDATE = SKILL / "scripts/validate_delivery.py"
+UPDATE_TOC = SKILL / "scripts/update_toc_pages.py"
 MAPPING_HEADERS = ["NESMA编号", "类型", "名称", "FP", "对应功能清单行", "对应正文章节/页面/数据模型", "对应接口YAML/卡片", "覆盖状态", "说明"]
 
 
@@ -53,6 +60,149 @@ def count_summary(rows):
     }
 
 
+def section_by_prefix(sections, prefix):
+    for section in sections:
+        if compact(section.get("heading")).startswith(compact(prefix)):
+            return section
+    return None
+
+
+def strip_direct_content(section):
+    section["paras"] = []
+    section["tables"] = []
+    section["images"] = []
+    section["meta"] = []
+
+
+def normalize_fixed_sections(document, sections):
+    title = compact(document.get("title"))
+    date_match = re.search(r"(\d{4})年(\d{1,2})月", str(document.get("date", "")))
+    if date_match:
+        document["date"] = f"{date_match.group(1)}年{date_match.group(2)}月"
+    purpose = section_by_prefix(sections, "2 文档目的")
+    if purpose:
+        purpose["paras"] = [
+            f"本文基于开发人员的已核验 NESMA 详细 FPA 结论，用于说明{title}的已交付业务范围、"
+            "数据模型、页面功能、接口契约和可验收约束，从而为需求支撑提供依据。"
+        ]
+        purpose["tables"] = []
+        purpose["images"] = []
+        purpose["meta"] = []
+
+    scope = section_by_prefix(sections, "3 文档范围")
+    if scope:
+        scope["paras"] = [item for item in scope.get("paras", []) if compact(item)][:1]
+        scope["tables"] = []
+        scope["images"] = []
+        scope["meta"] = []
+
+    terms = section_by_prefix(sections, "4 术语和缩写解释")
+    if terms:
+        terms["paras"] = []
+        terms["images"] = []
+        terms["meta"] = []
+        terms["tables"] = terms.get("tables", [])[:1]
+
+    references = section_by_prefix(sections, "5 参考文档")
+    if references:
+        references["paras"] = list(REFERENCE_DOCUMENTS)
+        references["tables"] = []
+        references["images"] = []
+        references["meta"] = []
+
+    definition = section_by_prefix(sections, "6 范围定义")
+    if definition:
+        definition["tables"] = []
+        definition["images"] = []
+        definition["meta"] = []
+
+    for index, section in enumerate(sections):
+        if list(descendants(sections, index)):
+            strip_direct_content(section)
+
+
+def add_table_references(sections):
+    for index, section in enumerate(sections):
+        identifiers = []
+        for image in section.get("images", []):
+            match = re.search(r"表\s*(\d+(?:[.\-]\d+)*)", compact(image.get("caption")))
+            if match:
+                identifiers.append(f"表{match.group(1)}")
+        if not identifiers:
+            continue
+        nested = [sections[index], *descendants(sections, index)]
+        body = " ".join(
+            str(part)
+            for item in nested
+            for part in item.get("paras", [])
+        ).replace(" ", "")
+        missing = [ident for ident in identifiers if ident not in body]
+        if not missing:
+            continue
+        targets = [item for item in nested if any(compact(part) for part in item.get("paras", []))]
+        require(targets, f"章节「{section.get('heading')}」有接口表但没有任何正文可挂引用")
+        target = targets[-1]
+        target["paras"][-1] = (
+            str(target["paras"][-1]).rstrip()
+            + f" 接口或数据契约见{'、'.join(missing)}。"
+        )
+
+
+def normalize_data_mappings(delivery):
+    features = delivery.get("features")
+    mappings = delivery.get("mappings")
+    require(isinstance(features, list) and features, "交付模型缺少 features")
+    require(isinstance(mappings, list), "交付模型缺少 mappings")
+    by_data_function = {}
+    for feature in features:
+        for ident in feature.get("df", []):
+            by_data_function.setdefault(ident, []).append(feature["row_id"])
+    for mapping in mappings:
+        if mapping.get("type") not in {"ILF", "ELF"}:
+            continue
+        rows = by_data_function.get(mapping.get("id"), [])
+        require(rows, f"{mapping.get('id')} 未被任何功能清单行引用")
+        mapping["feature_rows"] = "、".join(rows)
+
+
+def clean_data_model_ids(value):
+    return re.sub(r"\s*DF-\d+\s*", " ", str(value or "")).strip()
+
+
+def strip_data_model_ids(sections):
+    start = next(
+        (
+            index
+            for index, section in enumerate(sections)
+            if compact(section.get("heading")).startswith("7.1 数据模型")
+        ),
+        None,
+    )
+    require(start is not None, "缺少 7.1 数据模型章节")
+    for section in [sections[start], *descendants(sections, start)]:
+        section["heading"] = clean_data_model_ids(section.get("heading"))
+        section["paras"] = [clean_data_model_ids(item) for item in section.get("paras", [])]
+        for table in section.get("tables", []):
+            table["headers"] = [clean_data_model_ids(item) for item in table.get("headers", [])]
+            table["rows"] = [
+                [clean_data_model_ids(item) for item in row]
+                for row in table.get("rows", [])
+            ]
+        for image in section.get("images", []):
+            image["caption"] = clean_data_model_ids(image.get("caption"))
+
+
+def normalize_delivery(delivery):
+    document = delivery.get("document")
+    require(isinstance(document, dict), "交付模型缺少 document")
+    sections = document.get("sections")
+    require(isinstance(sections, list) and sections, "delivery document 缺少 sections")
+    normalize_fixed_sections(document, sections)
+    strip_data_model_ids(sections)
+    add_table_references(sections)
+    normalize_data_mappings(delivery)
+
+
 def check_model(delivery):
     require(isinstance(delivery, dict), "交付模型必须是 JSON 对象")
     model = delivery.get("model")
@@ -69,6 +219,12 @@ def check_model(delivery):
     mappings = delivery.get("mappings")
     require(isinstance(mappings, list), "交付模型缺少 mappings")
     require([row.get("id") for row in mappings] == [row["id"] for row in rows], "映射必须按计数模型顺序全覆盖")
+    feature_ids = {feature.get("row_id") for feature in delivery.get("features", [])}
+    feature_by_transaction = {
+        feature.get("tf"): feature.get("row_id")
+        for feature in delivery.get("features", [])
+        if feature.get("tf")
+    }
     for mapping in mappings:
         row = by_id[mapping["id"]]
         require(mapping.get("type") == row["type"], f"{mapping['id']} 类型与计数模型不一致")
@@ -76,6 +232,10 @@ def check_model(delivery):
         require(mapping.get("fp") == row["fp"], f"{mapping['id']} FP 与计数模型不一致")
         require(mapping.get("status") == "已覆盖", f"{mapping['id']} 尚未覆盖")
         require(mapping.get("feature_rows") and mapping.get("section_page_model"), f"{mapping['id']} 缺少正文归属")
+        mapping_rows = [item.strip() for item in re.split(r"[、,，]", str(mapping["feature_rows"])) if item.strip()]
+        require(mapping_rows and all(item in feature_ids for item in mapping_rows), f"{mapping['id']} 的 feature_rows 不是功能清单行")
+        if row["type"] in {"EI", "EO", "EQ"}:
+            require(mapping_rows == [feature_by_transaction.get(mapping["id"])], f"{mapping['id']} 必须唯一对应一行功能清单")
 
     features = delivery.get("features")
     require(isinstance(features, list) and features, "交付模型缺少 features")
@@ -327,6 +487,12 @@ def find_dotnet():
     return Path(found)
 
 
+def find_libreoffice():
+    found = shutil.which("libreoffice") or shutil.which("soffice")
+    require(found, "未找到 libreoffice/soffice，无法回填目录页码")
+    return Path(found)
+
+
 def card_style(delivery, model_path):
     raw = delivery.get("card_style")
     if not raw:
@@ -343,6 +509,7 @@ def build(model_path, output):
     require(model_path.is_file(), f"交付模型不存在：{model_path}")
     require(not output.exists() or (output.is_dir() and not any(output.iterdir())), f"输出目录必须不存在或为空：{output}")
     delivery = json.loads(model_path.read_text(encoding="utf-8"))
+    normalize_delivery(delivery)
     model, document, rows, data, transactions = check_model(delivery)
     style = card_style(delivery, model_path)
 
@@ -363,10 +530,28 @@ def build(model_path, output):
         require(rendered.returncode == 0, rendered.stderr or rendered.stdout)
         remap_card_images(document, delivery, json.loads(rendered.stdout))
         (work / "delivery-model.json").write_text(json.dumps(delivery, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        docx_path = work / "需求说明书.docx"
         subprocess.run([
             str(find_dotnet()), "run", "--project", str(DOCX), "--",
-            str(work / "delivery-model.json"), str(work / "需求说明书.docx"),
+            str(work / "delivery-model.json"), str(docx_path),
         ], check=True)
+        toc_dir = work / ".toc"
+        toc_dir.mkdir()
+        subprocess.run([
+            str(find_libreoffice()), "--headless", "--convert-to", "pdf",
+            "--outdir", str(toc_dir), str(docx_path),
+        ], check=True, capture_output=True, text=True)
+        toc_pdf = toc_dir / "需求说明书.pdf"
+        require(toc_pdf.is_file(), "LibreOffice 未生成目录页码所需的 PDF")
+        subprocess.run([
+            sys.executable, str(UPDATE_TOC),
+            str(work / "delivery-model.json"), str(toc_pdf),
+        ], check=True)
+        subprocess.run([
+            str(find_dotnet()), "run", "--project", str(DOCX), "--",
+            str(work / "delivery-model.json"), str(docx_path),
+        ], check=True)
+        shutil.rmtree(toc_dir)
         count_path = work / ".count-model.json"
         count_path.write_text(json.dumps(model, ensure_ascii=False), encoding="utf-8")
         validation = subprocess.run(

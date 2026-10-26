@@ -11,6 +11,9 @@ from openpyxl import load_workbook
 
 REPO = Path(__file__).parents[3]
 SCRIPT = Path(__file__).parents[1] / "scripts" / "validate_delivery.py"
+sys.path.insert(0, str(SCRIPT.parent))
+from validate_delivery import check_toc
+
 COUNT = REPO / "tests/fixtures/nesma-employee-assessment-v3/count/计数模型.json"
 DELIVERY = Path("/home/nc/projects/work/M域交付材料/员工考核域-2026-1021-v1")
 DELIVERY_MODEL = REPO / "tests/fixtures/nesma-employee-assessment-v3/delivery/delivery-model.json"
@@ -54,6 +57,13 @@ class DeliveryValidatorTest(unittest.TestCase):
         result = self.run_validator(copied)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("映射表编号", result.stderr)
+
+    def test_toc_requires_rendered_page_hints(self):
+        delivery = json.loads(DELIVERY_MODEL.read_text(encoding="utf-8"))
+        for section in delivery["document"]["sections"]:
+            section.pop("page_hint", None)
+        with self.assertRaisesRegex(SystemExit, "缺少页码"):
+            check_toc(delivery)
 
 
 if __name__ == "__main__":

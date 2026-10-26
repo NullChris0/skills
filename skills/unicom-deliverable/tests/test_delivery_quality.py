@@ -13,7 +13,6 @@ from delivery_quality import check_document_model, check_feature_granularity
 
 
 FIXTURE = REPO / "tests/fixtures/nesma-employee-assessment-v3/delivery/delivery-model.json"
-NEWS = Path("/home/nc/projects/work/M域交付材料/纪检新闻域-20261022-v1/delivery-model.json")
 
 
 class DeliveryQualityTest(unittest.TestCase):
@@ -71,10 +70,64 @@ class DeliveryQualityTest(unittest.TestCase):
                 delivery["model"]["transactions"],
             )
 
-    @unittest.skipUnless(NEWS.exists(), "news live delivery is unavailable")
-    def test_news_sparse_model_is_rejected(self):
-        delivery = json.loads(NEWS.read_text(encoding="utf-8"))
-        with self.assertRaises(SystemExit):
+    def test_nonleaf_section_body_is_rejected(self):
+        delivery = self.load()
+        target = next(
+            section
+            for section in delivery["document"]["sections"]
+            if section["heading"].startswith("7.2.1 ")
+        )
+        target["paras"] = ["非叶子章节不应有说明。"]
+        with self.assertRaisesRegex(SystemExit, "非叶子章节"):
+            check_document_model(
+                delivery["model"],
+                delivery["document"],
+                delivery["mappings"],
+            )
+
+    def test_table_reference_is_required(self):
+        delivery = self.load()
+        target = next(
+            section
+            for section in delivery["document"]["sections"]
+            if section["heading"].startswith("7.2.1.1 ")
+        )
+        target["images"][0]["caption"] = "表7-1 查询考核模板列表"
+        target["paras"] = [
+            paragraph.replace("接口契约见表7-1", "接口契约见附表")
+            for paragraph in target["paras"]
+        ]
+        with self.assertRaisesRegex(SystemExit, "缺少正文引用"):
+            check_document_model(
+                delivery["model"],
+                delivery["document"],
+                delivery["mappings"],
+            )
+
+    def test_fixed_document_purpose_is_required(self):
+        delivery = self.load()
+        target = next(
+            section
+            for section in delivery["document"]["sections"]
+            if section["heading"] == "2 文档目的"
+        )
+        target["paras"] = ["自定义目的。"]
+        with self.assertRaisesRegex(SystemExit, "2 文档目的"):
+            check_document_model(
+                delivery["model"],
+                delivery["document"],
+                delivery["mappings"],
+            )
+
+    def test_data_model_heading_rejects_df_id(self):
+        delivery = self.load()
+        target = next(
+            section
+            for section in delivery["document"]["sections"]
+            if section["heading"].startswith("7.1.1 ")
+        )
+        target["heading"] = "7.1.1 DF-01 新闻栏目"
+        with self.assertRaisesRegex(SystemExit, "不应写 DF-xx"):
             check_document_model(
                 delivery["model"],
                 delivery["document"],

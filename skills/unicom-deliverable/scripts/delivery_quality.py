@@ -39,6 +39,11 @@ REQUIRED_CONTENT = (
     "9 非功能性需求",
 )
 DATA_MODEL_LABELS = ("需求描述", "数据来源及流向", "加工逻辑")
+REFERENCE_DOCUMENTS = (
+    "《系统与软件工程功能规模测量 NESMA 方法 GB/T42588—2023》",
+    "《2025年中国软件行业基准数据（CSBMK® -202510）》",
+    "GB∕T36964-2018 软件工程 软件开发成本度量规范",
+)
 
 
 def require(condition, message):
@@ -68,8 +73,26 @@ def section_text(section):
     return compact(" ".join(str(part) for part in parts if part))
 
 
+def section_body_text(section):
+    parts = list(section.get("paras", []))
+    for table in section.get("tables", []):
+        parts.extend(table.get("headers", []))
+        for row in table.get("rows", []):
+            parts.extend(row)
+    return compact(" ".join(str(part) for part in parts if part))
+
+
 def has_content(section):
     return bool(section_text(section)) or bool(section.get("tables")) or bool(section.get("images"))
+
+
+def has_direct_content(section):
+    return bool(
+        any(compact(paragraph) for paragraph in section.get("paras", []))
+        or section.get("tables")
+        or section.get("images")
+        or section.get("meta")
+    )
 
 
 def descendants(sections, index):
@@ -106,6 +129,109 @@ def nonempty_paragraphs(sections):
     return sum(1 for section in sections for paragraph in section.get("paras", []) if compact(paragraph))
 
 
+def section_tree_body_text(sections, index):
+    return compact(
+        " ".join(
+            section_body_text(item)
+            for item in [sections[index], *descendants(sections, index)]
+        )
+    )
+
+
+def check_fixed_sections(document, sections):
+    title = compact(document.get("title"))
+    require(
+        title and not title.endswith("需求说明书"),
+        "document.title 必须是用户指定的需求名，且不含“需求说明书”后缀",
+    )
+    date = compact(document.get("date"))
+    require(
+        re.fullmatch(r"\d{4}年\d{1,2}月", date),
+        "document.date 必须使用 YYYY年M月，不在封面显示日",
+    )
+
+    purpose = section_with_prefix(sections, "2 文档目的")
+    expected_purpose = (
+        f"本文基于开发人员的已核验 NESMA 详细 FPA 结论，用于说明{title}的已交付业务范围、"
+        "数据模型、页面功能、接口契约和可验收约束，从而为需求支撑提供依据。"
+    )
+    require(
+        purpose and [compact(item) for item in purpose.get("paras", [])] == [expected_purpose],
+        "2 文档目的必须使用固定说明并替换需求名",
+    )
+    require(not purpose.get("tables") and not purpose.get("images"), "2 文档目的不能放表格或图片")
+
+    scope = section_with_prefix(sections, "3 文档范围")
+    scope_paras = [compact(item) for item in scope.get("paras", []) if compact(item)]
+    require(
+        len(scope_paras) == 1 and "本文覆盖" in scope_paras[0] and "本文不覆盖" in scope_paras[0],
+        "3 文档范围必须保留一段“本文覆盖……本文不覆盖……”说明",
+    )
+    require(not scope.get("tables") and not scope.get("images"), "3 文档范围不能放表格或图片")
+
+    terms = section_with_prefix(sections, "4 术语和缩写解释")
+    require(terms and not nonempty_paragraphs([terms]), "4 术语和缩写解释标题下不能写说明文字")
+    require(len(terms.get("tables", [])) == 1 and not terms.get("images"), "4 术语和缩写解释只保留术语表")
+
+    references = section_with_prefix(sections, "5 参考文档")
+    require(
+        references
+        and [compact(item) for item in references.get("paras", [])] == list(REFERENCE_DOCUMENTS),
+        "5 参考文档必须使用固定参考清单",
+    )
+    require(not references.get("tables") and not references.get("images"), "5 参考文档不能放表格或图片")
+
+    definition = section_with_prefix(sections, "6 范围定义")
+    require(
+        definition and nonempty_paragraphs([definition]) >= 1,
+        "6 范围定义必须保留范围说明正文",
+    )
+    require(not definition.get("tables") and not definition.get("images"), "6 范围定义不能放表格或图片")
+
+
+def check_heading_structure(sections):
+    for index, section in enumerate(sections):
+        if not list(descendants(sections, index)):
+            continue
+        require(
+            not has_direct_content(section),
+            f"非叶子章节「{section.get('heading')}」不能直接写正文、表格或图片",
+        )
+
+
+def check_table_references(sections):
+    for index, section in enumerate(sections):
+        body = section_tree_body_text(sections, index).replace(" ", "")
+        for image in section.get("images", []):
+            caption = compact(image.get("caption"))
+            match = re.search(r"表\s*(\d+(?:[.\-]\d+)*)", caption)
+            if not match:
+                continue
+            ident = f"表{match.group(1)}"
+            require(
+                ident in body,
+                f"图片「{caption}」缺少正文引用；应写“接口或数据契约见{ident}”",
+            )
+
+
+def check_data_model_ids(sections):
+    start = next(
+        (
+            index
+            for index, section in enumerate(sections)
+            if compact(section.get("heading")).startswith("7.1 数据模型")
+        ),
+        None,
+    )
+    require(start is not None, "缺少 7.1 数据模型章节")
+    for section in [sections[start], *descendants(sections, start)]:
+        text = section_text(section)
+        require(
+            not re.search(r"DF-\d+", text),
+            f"数据模型章节「{section.get('heading')}」不应写 DF-xx 编号",
+        )
+
+
 def check_document_model(model, document, mappings):
     require(isinstance(document, dict), "交付模型缺少 document")
     require(isinstance(mappings, list), "交付模型缺少 mappings")
@@ -128,6 +254,11 @@ def check_document_model(model, document, mappings):
     require(section_7, "缺少章节：7 功能需求")
     for heading in ("7.1 数据模型", "7.2 界面功能模块"):
         require(section_with_prefix(sections, heading), f"缺少功能需求子章节：{heading}")
+
+    check_fixed_sections(document, sections)
+    check_heading_structure(sections)
+    check_data_model_ids(sections)
+    check_table_references(sections)
 
     mapping_by_id = {mapping.get("id"): mapping for mapping in mappings}
     for row in model["data_functions"]:

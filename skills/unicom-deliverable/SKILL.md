@@ -22,13 +22,13 @@ disable-model-invocation: true
 
 ## 工作流
 
-1. 读取 [启动访谈.md](references/启动访谈.md)，确认计数模型路径、代码基线、业务材料、输出目录和功能清单模板。用户确认后固定在证据基线上。
+1. 读取 [启动访谈.md](references/启动访谈.md)，确认计数模型路径、代码基线、业务材料、用户指定的封面需求名与月份、输出目录和功能清单模板。用户确认后固定在证据基线上。
 2. 校验计数模型：JSON 合法、四表一致、无 `assumptions`/`unresolved`、每个正式行有证据和用户确认。发现计数问题返回阶段一，不在本阶段修正。
 3. 按 [交付模型契约.md](references/交付模型契约.md) 在 `delivery-model.json` 中建立映射：每条 NESMA 记录映射到功能清单行、正文章节/页面/数据模型和接口 YAML。具体条目数量取自 JSON，不写死。
 4. 在用户授权的只读范围内检查后端控制器/服务/DTO/DDL和前端路由/页面/API，补足业务描述、数据模型、页面行为和接口契约。仓库较大时使用子代理并行盘点，主 agent 负责合并和最终判断。`controller` 只保留为代码指针。
 5. 按 [接口表YAML规范.md](references/接口表YAML规范.md) 生成接口 YAML。YAML 是本 Skill 的编辑面；TeX 和图片是投影。调用规则只写业务句子。接口表只写代码基线支持的契约，不根据旧交付件补字段或错误码。
 6. `assets/api-card.sty` 是版式范本。鉴权文案直接写进 YAML 的 `auth`。成功信封、宏前缀与本项目不一致时，复制范本并改写，把改写后的 `api-card.sty` 路径写入 `card_style`。未改写时构建脚本使用范本。
-7. 按 [成稿与校验.md](references/成稿与校验.md) 建立 `delivery-model.json`，再用 `python <skill-directory>/scripts/build_delivery.py <delivery-model.json> <输出目录>` 生成 DOCX、功能清单、映射表、YAML、TeX 卡片和图片。接口表以图片插入 Word，保留图题、编号和正文引用。builder 在渲染前执行结构检查；缺少骨架、数据模型三段、事务正文或功能清单粒度时直接失败。
+7. 按 [成稿与校验.md](references/成稿与校验.md) 建立 `delivery-model.json`，再用 `python <skill-directory>/scripts/build_delivery.py <delivery-model.json> <输出目录>` 生成 DOCX、功能清单、映射表、YAML、TeX 卡片和图片。builder 会归一化固定前置章节、清理非叶子标题下的直接内容和标题后空行、移除数据模型中的 `DF-xx`、补齐表号正文引用，并转 PDF 回填目录页码。接口表以图片插入 Word，保留图题、编号和正文引用。
 8. 运行 `python <skill-directory>/scripts/validate_delivery.py <计数模型.json> <输出目录> [--delivery-model <delivery-model.json>]`，并核对：计数与映射全覆盖、交付文档骨架完整、每个数据功能有三段正文、每个事务有独立正文和接口/规则载体、功能清单一事务一行、YAML 与代码基线一致、每张卡片有图片、Word 可打开且无旧 UFP/旧编号、数据割接等非计数工作未进入 FP。通过后报告绝对路径。
 
 ## 边界

@@ -1,40 +1,52 @@
 ---
 name: unicom-deliverable
-description: 从阶段一计数模型生成联通交付 Word、功能清单和接口表。
+description: 按联通客户范例生成功能清单 xlsx 和需求说明书 docx，并配系统总体功能结构图。
 disable-model-invocation: true
 ---
 
 # 联通交付稿
 
-阶段二只接受阶段一产出的 `计数模型.json`。`功能点计数证据.xlsx` 用于人读核对，不能成为第二套计数事实。旧交付件和旧接口表目录不是输入。
+一次调用处理一个系统，产出两份客户交付件和一张图：
 
-一次调用只处理一个计数对象，在新目录生成：
+- `功能清单.xlsx`：六列，一行一个功能或数据实体。
+- `需求说明书.docx`：固定 12 章，第 8 章与功能清单逐行同名同序。
+- `系统总体功能结构.drawio` 及导出的 png：放在 1.2 节。
 
-- `映射表.xlsx`
-- `需求说明书.docx`：生成器写出的 Word
-- `功能清单.xlsx`
-- `接口表/`：YAML、TeX 卡片源和图片
-- `delivery-model.json`：阶段二 document builder 的结构输入，保留用于校验
-
-本稿不是通用软件工程意义上的标准 SRS，而是联通交付用的需求说明书。它必须按联通交付文档骨架组织，不能退化为任意章节的紧凑说明。`document builder` 会检查章节骨架、数据模型三段、事务正文和功能清单粒度。
-
-不重新计数，不改数据功能/事务功能类型，不改 FP，不增加假设。
+这两份文件的读者是按 NESMA 评估功能规模的客户评估人。他们逐条对照清单和说明书，核对每个功能的输入项、输出项和外部接口。所以写法只有一个标准：**与客户范例的章节、句式和粒度一致**。交付件里不出现任何计数结果（功能点数、UFP、人月、TF/DF 编号）；阶段一的 `计数模型.json` 只用于内部核对覆盖。
 
 ## 工作流
 
-1. 读取 [启动访谈.md](references/启动访谈.md)，确认计数模型路径、代码基线、业务材料、用户指定的封面需求名与月份、输出目录和功能清单模板。用户确认后固定在证据基线上。
-2. 校验计数模型：JSON 合法、四表一致、无 `assumptions`/`unresolved`、每个正式行有证据和用户确认。发现计数问题返回阶段一，不在本阶段修正。
-3. 按 [交付模型契约.md](references/交付模型契约.md) 在 `delivery-model.json` 中建立映射：每条 NESMA 记录映射到功能清单行、正文章节/页面/数据模型和接口 YAML。具体条目数量取自 JSON，不写死。
-4. 在用户授权的只读范围内检查后端控制器/服务/DTO/DDL和前端路由/页面/API，补足业务描述、数据模型、页面行为和接口契约。仓库较大时使用子代理并行盘点，主 agent 负责合并和最终判断。`controller` 只保留为代码指针。
-5. 按 [接口表YAML规范.md](references/接口表YAML规范.md) 生成接口 YAML。YAML 是本 Skill 的编辑面；TeX 和图片是投影。调用规则只写业务句子。接口表只写代码基线支持的契约，不根据旧交付件补字段或错误码。
-6. `assets/api-card.sty` 是版式范本。鉴权文案直接写进 YAML 的 `auth`。成功信封、宏前缀与本项目不一致时，复制范本并改写，把改写后的 `api-card.sty` 路径写入 `card_style`。未改写时构建脚本使用范本。
-7. 按 [成稿与校验.md](references/成稿与校验.md) 建立 `delivery-model.json`，再用 `python <skill-directory>/scripts/build_delivery.py <delivery-model.json> <输出目录>` 生成 DOCX、功能清单、映射表、YAML、TeX 卡片和图片。builder 会归一化固定前置章节、清理非叶子标题下的直接内容和标题后空行、移除数据模型中的 `DF-xx`、补齐表号正文引用，并转 PDF 回填目录页码。接口表以图片插入 Word，保留图题、编号和正文引用。
-8. 运行 `python <skill-directory>/scripts/validate_delivery.py <计数模型.json> <输出目录> [--delivery-model <delivery-model.json>]`，并核对：计数与映射全覆盖、交付文档骨架完整、每个数据功能有三段正文、每个事务有独立正文和接口/规则载体、功能清单一事务一行、YAML 与代码基线一致、每张卡片有图片、Word 可打开且无旧 UFP/旧编号、数据割接等非计数工作未进入 FP。通过后报告绝对路径。
+先定清单，再写说明书。清单未经用户确认前不写说明书：说明书第 8 章是清单的展开，清单一改就得重生成。
+
+1. 按 [启动访谈.md](references/启动访谈.md) 确认输入、输出位置和版式范本。
+2. 读代码和业务材料，按 [功能清单规则.md](references/功能清单规则.md) 写 `rows.json`，运行 `build_feature_list.py` 生成清单。把清单交给用户确认；用户改过的清单是唯一事实，之后一律从 xlsx 读回，不再用自己的 `rows.json`。
+3. 按 [需求说明书规则.md](references/需求说明书规则.md) 写 `spec.json`。
+4. 按 [结构图与版式.md](references/结构图与版式.md) 画系统总体功能结构图，需要物理表附录时渲染卡片。
+5. 运行 `build_requirement_doc.py` 生成 Word，再用 `refresh_toc.py` 刷新目录页码并导出 PDF。
+6. 运行 `validate_delivery.py`，然后把 PDF 的封面、目录、1.2 节、第 8 章某页、第 10 章某页和附录某页渲染成图片逐张看：图片不得溢出页面，表格不得错位，不得有空白页。
+7. 报告产物绝对路径、与代码不一致而改正的条目、没有核实的字段。
+
+```bash
+python <skill>/scripts/build_feature_list.py rows.json <系统名称> 功能清单.xlsx
+python <skill>/scripts/build_structure_diagram.py diagram.json 系统总体功能结构.drawio
+drawio -x -f png -s 2 -o 系统总体功能结构.png 系统总体功能结构.drawio
+python <skill>/scripts/build_requirement_doc.py spec.json 功能清单.xlsx raw.docx
+timeout 120 /usr/bin/python3 <skill>/scripts/refresh_toc.py raw.docx 需求说明书.docx 需求说明书.pdf
+python <skill>/scripts/validate_delivery.py 功能清单.xlsx 需求说明书.docx [--count-model 计数模型.json --mapping 映射.json]
+```
+
+`refresh_toc.py` 需要带 UNO 的解释器（通常是系统的 `/usr/bin/python3`），其余脚本需要 `python-docx`、`openpyxl`、`Pillow`、`PyYAML`。
+
+## 事实来源
+
+- 功能是否存在、输入输出字段、校验规则：以被估系统的代码为准，前端没有调用的后端接口不列。
+- 项目背景、往期建设、痛点、数字：只用用户给的材料里有依据的内容。材料里没有就不写，或向用户要；不得为了像范例而编造。
+- 清单和说明书与代码冲突时改交付件，并在报告里列出改了什么。
+- 核实不了的字段不写进输入项、输出项。
 
 ## 边界
 
-- 只写新输出目录，目录必须不存在或为空；不覆盖旧交付件。
-- 不把交付件、接口 YAML 或生成脚本写回被估后端仓库。
-- Word 是主交付格式，XLSX 直接生成；TeX 只用于接口卡片渲染，不作为整本文档的中间格式。
-- 数据割接、迁移、环境切换、线下操作属于非计数支撑工作，在文档中描述，不进入 UFP。
-- 独立重渲染已有接口 YAML 使用 `python <skill-directory>/scripts/render_cards.py <输出目录>/接口表 [api-card.sty]`。
+- 默认写新的输出目录。只有用户明确要求时才覆盖已有交付件；覆盖前先把原文件复制到临时目录，并确认它在你读取之后没有被改动。
+- 不把交付件或生成脚本写回被估系统的仓库。
+- 派子代理写内容时，把范本、已定稿清单、规则文档的路径和只许写的目录交给它；它交回后抽查与代码的一致性再落盘。
+- 交付件定稿前清除全部占位标记；脚本会拒绝含 `【`、`待确认`、`TODO` 的内容。

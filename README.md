@@ -5,7 +5,7 @@
 ## Skills
 
 - `nesma-count`：从已确认证据生成四表 NESMA 计数包和计数模型。
-- `unicom-deliverable`：从阶段一 JSON 生成联通交付 Word、功能清单和接口表。
+- `unicom-deliverable`：按联通客户范例生成功能清单、需求说明书和系统总体功能结构图。
 
 ## 安装
 
@@ -28,10 +28,8 @@ scripts/link-skills.sh
 ```bash
 python -m unittest \
   skills/nesma-count/tests/test_generate_count_package.py \
-  skills/unicom-deliverable/tests/test_build_delivery.py \
-  skills/unicom-deliverable/tests/test_delivery_quality.py \
-  skills/unicom-deliverable/tests/test_render_cards.py \
-  skills/unicom-deliverable/tests/test_validate_delivery.py
+  skills/unicom-deliverable/tests/test_delivery.py \
+  skills/unicom-deliverable/tests/test_render_cards.py
 bash tests/test_link_skills.sh
 ```
 

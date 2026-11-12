@@ -1,222 +1,117 @@
 #!/usr/bin/env python3
-"""Validate a stage-two delivery against its stage-one count model."""
+"""校验一套联通交付件：功能清单、需求说明书，以及可选的计数模型覆盖。"""
+
+from __future__ import annotations
 
 import argparse
 import json
-import posixpath
-import re
-import sys
-import xml.etree.ElementTree as ET
 from pathlib import Path
-from zipfile import ZipFile
 
-import yaml
-from openpyxl import load_workbook
+from docx import Document
+from docx.oxml.ns import qn
 
-from delivery_quality import check_document_model, check_feature_granularity
-
-
-def fail(message):
-    raise SystemExit(f"FAIL: {message}")
+from delivery_rules import CHAPTERS, check_rows, forbidden_in, is_entity, read_list
 
 
-def require(condition, message):
-    if not condition:
-        fail(message)
+def read_doc(path: Path) -> list[tuple[str, str]]:
+    """返回正文段落的（样式, 文字），不含目录。"""
+    document = Document(path)
+    items = []
+    for element in document.element.body.iterchildren():
+        if element.tag == qn("w:p"):
+            style = element.find(".//" + qn("w:pStyle"))
+            text = "".join(node.text or "" for node in element.iter(qn("w:t"))).strip()
+            if text:
+                items.append((style.get(qn("w:val")) if style is not None else "", text))
+        elif element.tag == qn("w:tbl"):
+            for node in element.iter(qn("w:t")):
+                if node.text and node.text.strip():
+                    items.append(("Table", node.text.strip()))
+    return items
 
 
-def expected_ids(model):
-    data = model.get("data_functions")
-    transactions = model.get("transactions")
-    require(isinstance(data, list) and data, "计数模型缺少 data_functions")
-    require(isinstance(transactions, list) and transactions, "计数模型缺少 transactions")
-    return [row["id"] for row in data] + [row["id"] for row in transactions], data, transactions
+def check_doc(items: list[tuple[str, str]], system: str, rows: list[dict[str, str]]) -> list[str]:
+    errors = []
+    chapters = [text for style, text in items if style == "Heading1" and not text.startswith("附录")]
+    expected = [f"{number} {title}" for number, title in enumerate(CHAPTERS, 1)]
+    if chapters != expected:
+        errors.append(f"章节骨架应为 {expected}，实际为 {chapters}")
+    if f"8.1 {system}" not in [text for style, text in items if style == "Heading2"]:
+        errors.append(f"8.1 的标题应与功能清单系统名称一致：{system!r}")
+    modules = [text.split(" ", 1)[1] for style, text in items if style == "Heading3"]
+    want_modules = list(dict.fromkeys(row["module"] for row in rows))
+    if modules != want_modules:
+        errors.append(f"第 8 章一级模块 {modules} 与功能清单 {want_modules} 不一致")
+    functions, current = [], None
+    for style, text in items:
+        if style == "Heading4":
+            current = {"name": text.split(" ", 1)[1], "lines": []}
+            functions.append(current)
+        elif style.startswith("Heading"):
+            current = None
+        elif current is not None:
+            current["lines"].append(text)
+    names = [function["name"] for function in functions]
+    want_names = [row["name"] for row in rows]
+    if names != want_names:
+        for index in range(max(len(names), len(want_names))):
+            a = names[index] if index < len(names) else None
+            b = want_names[index] if index < len(want_names) else None
+            if a != b:
+                errors.append(f"第 8 章第 {index + 1} 条功能 {a!r} 与功能清单 {b!r} 不一致")
+                break
+    for function, row in zip(functions, rows):
+        lines = function["lines"]
+        marks = {"新增": "☑新增", "修改": "☑修改"}
+        if not any(line.startswith("修改类型：") and marks[row["type"]] in line for line in lines):
+            errors.append(f"{function['name']}: 修改类型应勾选 {row['type']}")
+        if not any(line.startswith("功能描述：") for line in lines):
+            errors.append(f"{function['name']}: 缺少功能描述")
+        has_io = [any(line.startswith(prefix) for line in lines) for prefix in ("输入项：", "输出项：")]
+        if is_entity(function["name"]) and any(has_io):
+            errors.append(f"{function['name']}: 数据实体不写输入项、输出项")
+        if not is_entity(function["name"]) and not all(has_io):
+            errors.append(f"{function['name']}: 缺少输入项或输出项")
+    for _, text in items:
+        bad = forbidden_in(text)
+        if bad:
+            errors.append(f"需求说明书含禁用内容 {bad!r}：{text[:40]}")
+    return errors
 
 
-def check_mapping(output, model_rows, ids, features):
-    path = output / "映射表.xlsx"
-    require(path.exists(), f"缺少 {path.name}")
-    workbook = load_workbook(path, data_only=True)
-    require("NESMA映射" in workbook.sheetnames, "映射表缺少 NESMA映射 工作表")
-    sheet = workbook["NESMA映射"]
-    rows = list(sheet.iter_rows(min_row=2, values_only=True))
-    mapped = [row[0] for row in rows]
-    require(mapped == ids, "映射表编号必须与计数模型完全一致")
-    require(len(mapped) == len(set(mapped)), "映射表编号重复")
-    require(all(row[7] == "已覆盖" for row in rows), "映射表存在未覆盖项")
-    require(all(row[4] and row[5] for row in rows), "映射表功能清单行或正文位置为空")
-    by_id = {row["id"]: row for row in model_rows}
-    feature_ids = {feature.get("row_id") for feature in features}
-    feature_by_transaction = {
-        feature.get("tf"): feature.get("row_id")
-        for feature in features
-        if feature.get("tf")
-    }
-    for mapped_row in rows:
-        source = by_id[mapped_row[0]]
-        require(
-            (mapped_row[1], mapped_row[2], mapped_row[3]) == (source["type"], source["name"], source["fp"]),
-            f"映射表 {mapped_row[0]} 的类型、名称或 FP 与计数模型不一致",
-        )
-        mapped_features = [
-            item.strip()
-            for item in re.split(r"[、,，]", str(mapped_row[4] or ""))
-            if item.strip()
-        ]
-        require(
-            mapped_features and all(item in feature_ids for item in mapped_features),
-            f"映射表 {mapped_row[0]} 的对应功能清单行不是有效行号",
-        )
-        if source["type"] in {"EI", "EO", "EQ"}:
-            require(
-                mapped_features == [feature_by_transaction.get(mapped_row[0])],
-                f"映射表 {mapped_row[0]} 必须唯一对应一行功能清单",
-            )
-    return {"rows": len(rows)}
+def check_coverage(count_model: dict, mapping: dict, rows: list[dict[str, str]]) -> list[str]:
+    """计数模型里每个数据功能和事务功能都要映射到至少一条清单行。mapping: {计数编号: ["一级模块/二级模块", ...]}"""
+    errors = []
+    known = {f"{row['module']}/{row['name']}" for row in rows}
+    for item in count_model.get("data_functions", []) + count_model.get("transactions", []):
+        targets = mapping.get(item["id"]) or []
+        if not targets:
+            errors.append(f"{item['id']} {item['name']}: 没有映射到任何功能清单行")
+        for target in targets:
+            if target not in known:
+                errors.append(f"{item['id']}: 映射目标不在功能清单中：{target}")
+    for key in set(mapping) - {item["id"] for item in count_model.get("data_functions", []) + count_model.get("transactions", [])}:
+        errors.append(f"映射里的 {key} 不在计数模型中")
+    return errors
 
 
-def check_toc(delivery):
-    sections = delivery.get("document", {}).get("sections", [])
-    entries = [
-        section
-        for section in sections
-        if isinstance(section.get("level"), int) and 1 <= section["level"] <= 4
-    ]
-    require(entries, "Word 目录没有一级至四级条目")
-    hints = []
-    for section in entries:
-        raw = str(section.get("page_hint", ""))
-        require(raw.isdigit(), f"目录条目「{section.get('heading')}」缺少页码")
-        hints.append(int(raw))
-    require(all(hint > 1 for hint in hints), "目录页码仍包含占位页 1")
-    require(hints == sorted(hints), "目录页码没有随章节顺序递增")
-    return {"entries": len(hints), "first": hints[0], "last": hints[-1]}
-
-
-def check_features(output, transactions):
-    path = output / "功能清单.xlsx"
-    require(path.exists(), f"缺少 {path.name}")
-    workbook = load_workbook(path, data_only=True)
-    sheet = workbook.active
-    headers = [cell.value for cell in sheet[1]]
-    expected = ["序号", "系统名称", "一级模块", "二级模块", "功能需求描述", "外部接口需求描述", "功能（新增/修改）", "备注"]
-    require(headers == expected, "功能清单列顺序不符合模板")
-    rows = list(sheet.iter_rows(min_row=2, values_only=True))
-    remarks = "\n".join(str(row[7]) for row in rows)
-    for row in transactions:
-        require(remarks.count(row["id"]) == 1, f"功能清单未唯一覆盖 {row['id']}")
-    last_system = ""
-    last_module = ""
-    for row in rows:
-        last_system = row[1] or last_system
-        last_module = row[2] or last_module
-        require(last_system and last_module and row[3] and row[4], "功能清单存在缺少系统/模块/描述的行")
-    return {"rows": len(rows)}
-
-
-def flatten_nesma(value):
-    if value is None:
-        return []
-    if isinstance(value, str):
-        return [value]
-    require(isinstance(value, list) and all(isinstance(item, str) for item in value), "nesma 必须是字符串或字符串列表")
-    return value
-
-
-def check_interfaces(output, ids):
-    root = output / "接口表"
-    require(root.exists(), "缺少 接口表 目录")
-    yaml_files = sorted(root.rglob("*.yaml"))
-    require(yaml_files, "接口表没有 YAML")
-    images = [path for path in (root / "images").rglob("*") if path.is_file()] if (root / "images").exists() else []
-    require(images, "接口表没有图片")
-    require(len(images) >= len(yaml_files), f"YAML 与图片数量不一致：{len(yaml_files)} vs {len(images)}")
-    seen = set()
-    http = 0
-    elf = 0
-    db = 0
-    known = set(ids)
-    for path in yaml_files:
-        record = yaml.safe_load(path.read_text(encoding="utf-8"))
-        require(isinstance(record, dict), f"{path.name} 不是 YAML 对象")
-        ident = record.get("id")
-        require(isinstance(ident, str) and ident, f"{path.name} 缺少 id")
-        require(ident not in seen, f"接口 id 重复：{ident}")
-        seen.add(ident)
-        record_type = record.get("kind")
-        if record_type is None and "columns" in record:
-            record_type = "db"
-        require(record_type in {"http", "elf", "db"}, f"{ident} 的 kind 无效")
-        if record_type == "http":
-            require(all(record.get(key) for key in ("method", "path", "controller")), f"{ident} 缺少 HTTP 契约字段")
-            http += 1
-        elif record_type == "elf":
-            require(record.get("nesma"), f"{ident} 缺少 nesma")
-            elf += 1
-        else:
-            require(record.get("columns"), f"{ident} 缺少 columns")
-            db += 1
-        for ref in flatten_nesma(record.get("nesma")):
-            if ref == "uncounted":
-                continue
-            require(ref in known, f"{ident} 引用不存在的 NESMA 编号：{ref}")
-    return {"yaml": len(yaml_files), "images": len(images), "http": http, "elf": elf, "db": db}
-
-
-def check_docx(output, ufp, ids, image_count):
-    path = output / "需求说明书.docx"
-    require(path.exists(), f"缺少 {path.name}")
-    with ZipFile(path) as archive:
-        require("word/document.xml" in archive.namelist(), "Word 缺少 document.xml")
-        root = ET.fromstring(archive.read("word/document.xml"))
-        text = "".join(root.itertext())
-        ufp_values = {int(value) for value in re.findall(r"(\d+)\s*UFP", text)}
-        require(ufp_values == {ufp}, f"Word UFP 与计数模型不一致：{sorted(ufp_values)}")
-        nesma_values = set(re.findall(r"\b(?:DF|TF)-\d+\b", text))
-        unknown = sorted(nesma_values - set(ids))
-        require(not unknown, f"Word 含非阶段一 NESMA 编号：{', '.join(unknown)}")
-        rels = ET.fromstring(archive.read("word/_rels/document.xml.rels"))
-        media = []
-        for relation in rels:
-            if not relation.attrib.get("Type", "").endswith("/image"):
-                continue
-            target = relation.attrib["Target"].lstrip("/")
-            candidates = [target, posixpath.normpath(posixpath.join("word", target))]
-            require(any(candidate in archive.namelist() for candidate in candidates), f"Word 图片关系目标不存在：{target}")
-            media.append(target)
-        require(len(media) >= image_count, f"Word 图片数少于接口表图片数：{len(media)} vs {image_count}")
-    return {"media": len(media), "chars": len(text)}
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("count_model", type=Path)
-    parser.add_argument("output", type=Path)
-    parser.add_argument("--delivery-model", type=Path)
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("feature_list", type=Path)
+    parser.add_argument("requirement_doc", type=Path)
+    parser.add_argument("--count-model", type=Path, help="阶段一 计数模型.json；给出时必须同时给 --mapping")
+    parser.add_argument("--mapping", type=Path, help="内部映射 JSON：{计数编号: [\"一级模块/二级模块\"]}")
     args = parser.parse_args()
-    model = json.loads(args.count_model.read_text(encoding="utf-8"))
-    require("assumptions" not in model and "unresolved" not in model, "阶段一模型含假设或未决项")
-    ids, data, transactions = expected_ids(model)
-    ufp = sum(row["fp"] for row in data + transactions)
-    delivery_path = args.delivery_model or args.output / "delivery-model.json"
-    require(delivery_path.exists(), "缺少 delivery-model.json")
-    delivery = json.loads(delivery_path.read_text(encoding="utf-8"))
-    check_document_model(model, delivery.get("document"), delivery.get("mappings"))
-    check_feature_granularity(delivery.get("features"), transactions)
-    mapping = check_mapping(args.output, data + transactions, ids, delivery.get("features", []))
-    features = check_features(args.output, transactions)
-    interfaces = check_interfaces(args.output, ids)
-    docx = check_docx(args.output, ufp, ids, interfaces["images"])
-    toc = check_toc(delivery)
-    print(json.dumps({
-        "status": "PASS",
-        "counts": {"data_functions": len(data), "transactions": len(transactions), "ufp": ufp},
-        "mapping": mapping,
-        "features": features,
-        "interfaces": interfaces,
-        "docx": docx,
-        "toc": toc,
-    }, ensure_ascii=False, indent=2))
+    if bool(args.count_model) != bool(args.mapping):
+        parser.error("--count-model 与 --mapping 必须同时给出")
+    system, rows = read_list(args.feature_list)
+    errors = check_rows(rows) + check_doc(read_doc(args.requirement_doc), system, rows)
+    if args.count_model:
+        errors += check_coverage(json.loads(args.count_model.read_text(encoding="utf-8")),
+                                 json.loads(args.mapping.read_text(encoding="utf-8")), rows)
+    if errors:
+        parser.exit(1, "FAIL:\n" + "\n".join(errors) + "\n")
+    print(f"OK: {len(rows)} 行功能清单与需求说明书第 8 章一致" + ("，计数模型全覆盖" if args.count_model else ""))
 
 
 if __name__ == "__main__":

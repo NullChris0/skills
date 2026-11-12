@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render interface YAML files as TeX cards and PNG images."""
+"""把物理表 YAML 渲染为 TeX 卡片和 PNG 图片，供需求说明书附录使用。"""
 
 from __future__ import annotations
 
@@ -17,8 +17,7 @@ import yaml
 from PIL import Image, ImageChops
 
 
-COMMON_FIELDS = ("id", "kind", "title")
-ENVELOPES = {"ajax-result", "table-data-info", "file-stream"}
+COMMON_FIELDS = ("id", "title")
 DEFAULT_STYLE = Path(__file__).resolve().parent.parent / "assets" / "api-card.sty"
 TEX_ESCAPES = {
     "\\": r"\textbackslash{}",
@@ -78,7 +77,7 @@ def field_rows(fields: list[Any], source: Path) -> str:
                 "label": field[2] if len(field) > 2 else "",
             }
         if not isinstance(field, dict) or not field.get("name"):
-            fail(f"{source}: fields/request/response/columns 项必须是名称字符串或含 name 的对象")
+            fail(f"{source}: columns 项必须是名称字符串或含 name 的对象")
         name = tex_name(field["name"])
         field_type = field.get("type") or field.get("java_type") or ""
         label = tex_escape(field.get("label") or field_type or field["name"])
@@ -111,160 +110,6 @@ def field_list(record: dict[str, Any], key: str, source: Path) -> list[Any]:
     if not isinstance(value, list):
         fail(f"{source}: {key} 必须是列表")
     return value
-
-
-def optional_fields(record: dict[str, Any], key: str, source: Path) -> list[Any]:
-    value = record.get(key)
-    if value in (None, ""):
-        return []
-    if not isinstance(value, list):
-        fail(f"{source}: {key} 必须是列表")
-    return value
-
-
-def rules_text(record: dict[str, Any], source: Path) -> str:
-    value = record.get("rules")
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return as_text(value)
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        fail(f"{source}: rules 必须是字符串或字符串列表")
-    return "；".join(as_text(item) for item in value if as_text(item))
-
-
-def key_block(key: str, rows: str) -> list[str]:
-    if not rows:
-        return []
-    return [f"  {key}={{", rows, "  },", f"  {key}rows={{1}},"]
-
-
-def http_card(record: dict[str, Any], source: Path) -> str:
-    for key in ("nesma", "section", "table", "caption"):
-        required(record, key, source)
-    method = as_text(required(record, "method", source)).upper()
-    path = required(record, "path", source)
-    as_text(required(record, "controller", source))
-    auth = required(record, "auth", source)
-    request = optional_fields(record, "request", source)
-    response_value = record.get("response")
-    envelope = (
-        record.get("envelope")
-        or (
-            "file-stream"
-            if record.get("file")
-            or record.get("response_kind") == "file"
-            or (
-                isinstance(response_value, dict)
-                and {"kind", "name_pattern"} & set(response_value)
-            )
-            else None
-        )
-        or "ajax-result"
-    )
-    if envelope not in ENVELOPES:
-        fail(f"{source}: envelope 必须是 {', '.join(sorted(ENVELOPES))}")
-    if isinstance(response_value, list):
-        response = response_value
-    elif envelope == "file-stream" and response_value is not None:
-        response = []
-    else:
-        response = optional_fields(record, "response", source)
-    if not response and envelope != "file-stream" and record.get("data"):
-        response = optional_fields(record, "data", source)
-
-    rule = rules_text(record, source)
-    request_key = "query" if method in {"GET", "HEAD"} else "body"
-    response_rows = field_rows(response, source)
-    parts = [
-        rf"\EaHttpCard{{{tex_id(record['id'], source)}}}{{%",
-        f"  title={{{tex_escape(record['title'])}}},",
-        f"  method={{{tex_escape(method)}}},",
-        f"  path={{{tex_escape(path)}}},",
-        f"  nesma={{{tex_escape(record['nesma'])}}},",
-        f"  table={{{tex_escape(record['table'])}}},",
-        f"  auth={{{tex_escape(auth)}}},",
-        f"  envelope={{{envelope}}},",
-        *(key_block(request_key, field_rows(request, source)) if request else []),
-        *(
-            key_block("query", field_rows(optional_fields(record, "query", source), source))
-            if not request and "query" in record
-            else []
-        ),
-        *(
-            key_block("body", field_rows(optional_fields(record, "body", source), source))
-            if not request and "body" in record
-            else []
-        ),
-        *(
-            key_block("form", field_rows(optional_fields(record, "form", source), source))
-            if not request and "form" in record
-            else []
-        ),
-        *(
-            key_block("pathparams", field_rows(optional_fields(record, "path_params", source), source))
-            if not request and "path_params" in record
-            else []
-        ),
-    ]
-    if envelope == "file-stream":
-        file_info = record.get("file") if isinstance(record.get("file"), dict) else {}
-        if not file_info and isinstance(response_value, dict):
-            file_info = response_value
-        file_kind = (
-            file_info.get("kind")
-            or record.get("file_kind")
-            or (record.get("file") if isinstance(record.get("file"), str) else None)
-            or (response_value if isinstance(response_value, str) else None)
-            or "file"
-        )
-        parts.append(f"  filekind={{{tex_escape(file_kind)}}},")
-        if file_info.get("name_pattern"):
-            parts.append(f"  filename={{{tex_escape(file_info['name_pattern'])}}},")
-    elif record.get("response_java"):
-        parts.append(f"  responsejava={{{tex_escape(record['response_java'])}}},")
-    else:
-        parts.append("  responsejava={成功响应业务字段},")
-    parts.extend(
-        [
-            "  data={",
-            response_rows,
-            "  },",
-            "  responserows={1},",
-            f"  rule={{{tex_escape(rule)}}},",
-            "}",
-        ]
-    )
-    return "\n".join(parts)
-
-
-def elf_card(record: dict[str, Any], source: Path) -> str:
-    for key in ("nesma", "section", "table", "caption"):
-        required(record, key, source)
-    fields = field_list(record, "fields", source)
-    if not fields:
-        fail(f"{source}: fields 不得为空")
-    source_name = as_text(required(record, "source", source))
-    direction = as_text(required(record, "direction", source))
-    rules = rules_text(record, source)
-    rule = "；".join(
-        part
-        for part in (f"来源：{source_name}", f"方向：{direction}", rules)
-        if part
-    )
-    return "\n".join(
-        [
-            rf"\EaElfCard{{{tex_id(record['id'], source)}}}{{%",
-            f"  title={{{tex_escape(record['title'])}}},",
-            f"  table={{{tex_escape(record['table'])}}},",
-            "  data={",
-            field_rows(fields, source),
-            "  },",
-            "  datarows={1},",
-            f"  rule={{{tex_escape(rule)}}},",
-            "}",
-        ]
-    )
 
 
 def db_card(record: dict[str, Any], source: Path) -> str:
@@ -322,16 +167,9 @@ def load_cards(root: Path) -> list[tuple[Path, dict[str, Any], str]]:
         if not safe_name or safe_name in seen_names:
             fail(f"{path}: id 无法生成唯一的安全文件名：{record['id']}")
         seen_names.add(safe_name)
-        kind = record["kind"]
-        if kind == "http":
-            card = http_card(record, path)
-        elif kind == "elf":
-            card = elf_card(record, path)
-        elif kind == "db":
-            card = db_card(record, path)
-        else:
-            fail(f"{path}: kind 必须是 http、elf 或 db")
-        cards.append((path, record, card))
+        if record.get("kind", "db") != "db":
+            fail(f"{path}: 只支持物理表卡片（kind: db）")
+        cards.append((path, record, db_card(record, path)))
     return cards
 
 
@@ -415,7 +253,7 @@ def render(root: Path, style: Path) -> dict[str, Any]:
     root = root.resolve()
     style = style.resolve()
     if not root.is_dir():
-        fail(f"接口表目录不存在：{root}")
+        fail(f"物理表目录不存在：{root}")
     if not style.is_file():
         fail(f"样式文件不存在：{style}")
     tools = {name: shutil.which(name) for name in ("xelatex", "pdftoppm")}
@@ -450,7 +288,6 @@ def render(root: Path, style: Path) -> dict[str, Any]:
         rendered.append(
             {
                 "id": record["id"],
-                "kind": record["kind"],
                 "tex": str(tex_path),
                 "image": str(image_path),
             }
@@ -460,9 +297,9 @@ def render(root: Path, style: Path) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="把接口表 YAML 渲染为 TeX 卡片和 PNG 图片。"
+        description="把物理表 YAML 渲染为 TeX 卡片和 PNG 图片。"
     )
-    parser.add_argument("root", type=Path, help="包含 YAML 的接口表目录")
+    parser.add_argument("root", type=Path, help="包含物理表 YAML 的目录")
     parser.add_argument(
         "style",
         nargs="?",
